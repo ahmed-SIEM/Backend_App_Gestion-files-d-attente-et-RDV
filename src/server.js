@@ -28,10 +28,20 @@ app.get('/api/test', (req, res) => {
   });
 });
 
-// Connexion MongoDB (on fera ça plus tard quand MongoDB sera installé)
-// mongoose.connect(process.env.MONGODB_URI)
-//   .then(() => console.log('✅ MongoDB connecté'))
-//   .catch(err => console.error('❌ Erreur MongoDB:', err));
+// ===== ROUTES API =====
+app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/etablissements', require('./routes/etablissement.routes'));
+app.use('/api/services', require('./routes/service.routes'));
+app.use('/api/tickets', require('./routes/ticket.routes'));
+app.use('/api/rendezvous', require('./routes/rendezvous.routes'));
+app.use('/api/creneaux', require('./routes/creneau.routes'));
+
+// Connexion MongoDB
+mongoose.connect(process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000,
+})
+  .then(() => console.log('✅ MongoDB connecté'))
+  .catch(err => console.error('❌ Erreur MongoDB:', err.message));
 
 // Gestion des erreurs 404
 app.use((req, res) => {
