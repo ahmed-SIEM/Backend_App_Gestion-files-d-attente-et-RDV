@@ -37,12 +37,6 @@ const creneauSchema = new mongoose.Schema({
     type: String,
     enum: ['libre', 'occupe', 'bloque'],
     default: 'libre'
-  },
-  
-  type_creation: {
-    type: String,
-    enum: ['auto', 'manuel'],
-    default: 'auto'
   }
 
 }, {

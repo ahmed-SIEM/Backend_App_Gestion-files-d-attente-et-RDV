@@ -118,7 +118,6 @@ exports.ajouterCreneau = async (req, res) => {
       heure_debut,
       heure_fin,
       duree_minutes: duree_minutes || calendrier.duree_rdv_defaut,
-      type_creation: 'manuel',
       statut: 'libre'
     });
     

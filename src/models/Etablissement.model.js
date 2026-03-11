@@ -9,8 +9,9 @@ const etablissementSchema = new mongoose.Schema({
   
   type: {
     type: String,
-    enum: ['mairie', 'hopital', 'cnam', 'poste', 'banque', 'autre'],
-    required: true
+    required: true,
+    trim: true
+    // Plus d'enum ! L'admin peut écrire ce qu'il veut : Pharmacie, École, Tribunal, etc.
   },
   
   description: {
