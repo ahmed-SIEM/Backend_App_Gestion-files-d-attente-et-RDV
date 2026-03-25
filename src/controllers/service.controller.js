@@ -50,6 +50,63 @@ exports.detailsService = async (req, res) => {
   }
 };
 
+// ⭐ STATS PUBLIQUES D'UN SERVICE
+exports.statsService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Vérifier que le service existe
+    const service = await Service.findById(id);
+    if (!service) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Service non trouvé' 
+      });
+    }
+    
+    // Import sécurisé du modèle Ticket
+    const mongoose = require('mongoose');
+    const Ticket = mongoose.model('Ticket');
+    
+    // Compter les tickets en attente
+    const ticketsEnAttente = await Ticket.countDocuments({
+      service: id,
+      statut: 'en_attente'
+    });
+    
+    // Trouver le ticket actuel (appelé)
+    const ticketActuel = await Ticket.findOne({
+      service: id,
+      statut: 'appele'
+    }).sort({ numero: -1 });
+    
+    // Calculer le temps d'attente estimé (en minutes)
+    const tempsAttente = ticketsEnAttente * (service.temps_traitement_moyen || 15);
+    
+    // Utiliser le nombre de guichets du service
+    const guichetsActifs = service.nombre_guichets || 1;
+    
+    res.json({
+      success: true,
+      data: {
+        nombre_en_attente: ticketsEnAttente,
+        ticket_actuel: ticketActuel ? ticketActuel.numero : null,
+        temps_attente_estime: tempsAttente,
+        guichets_actifs: guichetsActifs,
+        total_guichets: service.nombre_guichets || 1
+      }
+    });
+    
+  } catch (error) {
+    console.error('Erreur stats service:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Erreur lors de la récupération des statistiques',
+      error: error.message
+    });
+  }
+};
+
 // ===== ROUTES ADMIN ÉTABLISSEMENT =====
 
 // MES SERVICES

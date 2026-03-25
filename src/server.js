@@ -35,6 +35,8 @@ app.use('/api/services', require('./routes/service.routes'));
 app.use('/api/tickets', require('./routes/ticket.routes'));
 app.use('/api/rendezvous', require('./routes/rendezvous.routes'));
 app.use('/api/creneaux', require('./routes/creneau.routes'));
+app.use('/api/agents', require('./routes/agent.routes'));
+app.use('/api/stats', require('./routes/stats.routes')); // ⭐ CORRIGÉ !
 
 // Connexion MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
@@ -57,6 +59,6 @@ app.listen(PORT, () => {
   console.log('================================');
   console.log(`🚀 Serveur FileZen démarré !`);
   console.log(`📍 URL: http://localhost:${PORT}`);
-  console.log(`⚙️  Mode: ${process.env.NODE_ENV}`);
+  console.log(`⚙️  Mode: ${process.env.NODE_ENV || 'development'}`);
   console.log('================================');
 });

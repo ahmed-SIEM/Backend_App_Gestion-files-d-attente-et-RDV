@@ -7,6 +7,9 @@ const { verifierToken, verifierRole } = require('../middlewares/auth.middleware'
 router.get('/etablissement/:etablissementId', serviceController.listerServices);
 router.get('/:id', serviceController.detailsService);
 
+// ⭐ NOUVELLE ROUTE: Stats publiques d'un service
+router.get('/:id/stats', serviceController.statsService);
+
 // Routes Admin Établissement
 router.get('/me/services', 
   verifierToken, 

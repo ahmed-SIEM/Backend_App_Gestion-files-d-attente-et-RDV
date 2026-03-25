@@ -11,7 +11,6 @@ const etablissementSchema = new mongoose.Schema({
     type: String,
     required: true,
     trim: true
-    // Plus d'enum ! L'admin peut écrire ce qu'il veut : Pharmacie, École, Tribunal, etc.
   },
   
   description: {
@@ -37,17 +36,56 @@ const etablissementSchema = new mongoose.Schema({
   },
   
   // Contact
-  telephone: {
+  telephone_etablissement: {
     type: String,
     required: true
   },
   
-  email: {
+  email_etablissement: {
     type: String,
     required: true
   },
   
   site_web: String,
+  
+  // ⭐ HORAIRES D'OUVERTURE (Configurables par l'admin)
+  horaires: {
+    lundi: {
+      ouvert: { type: Boolean, default: true },
+      ouverture: { type: String, default: '08:00' },
+      fermeture: { type: String, default: '17:00' }
+    },
+    mardi: {
+      ouvert: { type: Boolean, default: true },
+      ouverture: { type: String, default: '08:00' },
+      fermeture: { type: String, default: '17:00' }
+    },
+    mercredi: {
+      ouvert: { type: Boolean, default: true },
+      ouverture: { type: String, default: '08:00' },
+      fermeture: { type: String, default: '17:00' }
+    },
+    jeudi: {
+      ouvert: { type: Boolean, default: true },
+      ouverture: { type: String, default: '08:00' },
+      fermeture: { type: String, default: '17:00' }
+    },
+    vendredi: {
+      ouvert: { type: Boolean, default: true },
+      ouverture: { type: String, default: '08:00' },
+      fermeture: { type: String, default: '17:00' }
+    },
+    samedi: {
+      ouvert: { type: Boolean, default: true },
+      ouverture: { type: String, default: '08:00' },
+      fermeture: { type: String, default: '13:00' }
+    },
+    dimanche: {
+      ouvert: { type: Boolean, default: false },
+      ouverture: { type: String, default: '00:00' },
+      fermeture: { type: String, default: '00:00' }
+    }
+  },
   
   // Statut
   statut: {
@@ -64,7 +102,6 @@ const etablissementSchema = new mongoose.Schema({
   admin: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
   },
   
   // Documents justificatifs
@@ -79,4 +116,4 @@ const etablissementSchema = new mongoose.Schema({
   timestamps: true
 });
 
-module.exports = mongoose.model('Etablissement', etablissementSchema);
+module.exports = mongoose.models.Etablissement || mongoose.model('Etablissement', etablissementSchema);

@@ -44,6 +44,9 @@ const ticketSchema = new mongoose.Schema({
   heure_appel: Date,
   heure_service: Date,
   
+  // ⭐ AJOUTÉ : Date d'annulation pour anti-spam
+  date_annulation: Date,
+  
   // Agent qui traite
   agent: {
     type: mongoose.Schema.Types.ObjectId,
@@ -61,5 +64,7 @@ const ticketSchema = new mongoose.Schema({
 
 // Index pour recherche rapide
 ticketSchema.index({ service: 1, statut: 1, position: 1 });
+ticketSchema.index({ citoyen: 1, service: 1, statut: 1 });
+ticketSchema.index({ service: 1, date_annulation: 1 }); // ⭐ Pour anti-spam
 
 module.exports = mongoose.model('Ticket', ticketSchema);

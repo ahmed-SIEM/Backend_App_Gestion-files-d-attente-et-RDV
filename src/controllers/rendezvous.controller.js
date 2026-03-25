@@ -2,7 +2,7 @@ const { RendezVous, Creneau, Service, Calendrier } = require('../models');
 
 // ===== ROUTES CITOYEN =====
 
-// LISTE CRÉNEAUX DISPONIBLES
+// LISTE CRÉNEAUX DISPONIBLES (TOUS LES CRÉNEAUX)
 exports.creneauxDisponibles = async (req, res) => {
   try {
     const { serviceId, date } = req.query;
@@ -24,15 +24,15 @@ exports.creneauxDisponibles = async (req, res) => {
       });
     }
     
-    // Chercher les créneaux libres
+    // Chercher TOUS les créneaux (libres + occupés + bloqués)
     const dateRecherche = new Date(date);
     const dateDebut = new Date(dateRecherche.setHours(0, 0, 0, 0));
     const dateFin = new Date(dateRecherche.setHours(23, 59, 59, 999));
     
     const creneaux = await Creneau.find({
       service: serviceId,
-      date: { $gte: dateDebut, $lte: dateFin },
-      statut: 'libre'
+      date: { $gte: dateDebut, $lte: dateFin }
+      // SUPPRIMÉ : statut: 'libre' pour afficher TOUS les créneaux
     }).sort({ heure_debut: 1 });
     
     res.json({
@@ -155,7 +155,7 @@ exports.detailsRDV = async (req, res) => {
     })
     .populate('creneaux')
     .populate('service', 'nom')
-    .populate('etablissement', 'nom adresse telephone');
+    .populate('etablissement', 'nom adresse telephone_etablissement');
     
     if (!rdv) {
       return res.status(404).json({ 
@@ -237,8 +237,6 @@ exports.reprogrammerRDV = async (req, res) => {
         message: 'RDV non trouvé.' 
       });
     }
-    
-    // TODO: Vérifier délai de 24h (selon config établissement)
     
     // Vérifier que les nouveaux créneaux sont libres
     const nouveauxCreneaux = await Creneau.find({

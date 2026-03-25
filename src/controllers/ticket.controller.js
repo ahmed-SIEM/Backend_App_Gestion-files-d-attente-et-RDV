@@ -7,7 +7,7 @@ exports.prendreTicket = async (req, res) => {
   try {
     const { serviceId } = req.body;
     
-    // Vérifier que le service existe et a la file activée
+    // 1. Vérifier que le service existe
     const service = await Service.findById(serviceId).populate('etablissement');
     
     if (!service) {
@@ -31,7 +31,99 @@ exports.prendreTicket = async (req, res) => {
       });
     }
     
-    // Récupérer ou créer la file d'attente
+    // 2. RÈGLE : Un seul ticket actif par service
+    const ticketExistant = await Ticket.findOne({
+      citoyen: req.user._id,
+      service: serviceId,
+      statut: { $in: ['en_attente', 'appele'] }
+    });
+    
+    if (ticketExistant) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Vous avez déjà un ticket actif pour ce service.' 
+      });
+    }
+    
+    // 3. RÈGLE : Anti-spam (3 annulations max/jour)
+    const aujourdhui = new Date();
+    aujourdhui.setHours(0, 0, 0, 0);
+    const demain = new Date(aujourdhui);
+    demain.setDate(demain.getDate() + 1);
+    
+    const annulationsAujourdhui = await Ticket.countDocuments({
+      citoyen: req.user._id,
+      service: serviceId,
+      statut: 'annule',
+      date_annulation: { $gte: aujourdhui, $lt: demain }
+    });
+    
+    if (annulationsAujourdhui >= 3) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Vous avez atteint la limite d\'annulations pour aujourd\'hui (3 max). Réessayez demain.' 
+      });
+    }
+    
+    // 4. RÈGLE : Vérifier les horaires de l'établissement
+    const maintenant = new Date();
+    const heureActuelle = maintenant.getHours() * 60 + maintenant.getMinutes(); // en minutes
+    const jourSemaine = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'][maintenant.getDay()];
+    
+    const horairesJour = service.etablissement.horaires?.[jourSemaine];
+    
+    if (!horairesJour || !horairesJour.ouvert) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'L\'établissement est fermé aujourd\'hui.' 
+      });
+    }
+    
+    // Convertir heures en minutes
+    const [heureDebut, minuteDebut] = horairesJour.ouverture.split(':').map(Number);
+    const [heureFin, minuteFin] = horairesJour.fermeture.split(':').map(Number);
+    const ouverture = heureDebut * 60 + minuteDebut;
+    const fermeture = heureFin * 60 + minuteFin;
+    
+    if (heureActuelle < ouverture) {
+      return res.status(400).json({ 
+        success: false,
+        message: `L'établissement ouvre à ${horairesJour.ouverture}.` 
+      });
+    }
+    
+    // 5. RÈGLE : Vérifier si peut être servi avant fermeture
+    const tempsTraitementMoyen = service.temps_traitement_moyen || 15; // minutes
+    
+    // Compter tickets en attente
+    const ticketsEnAttente = await Ticket.countDocuments({
+      service: serviceId,
+      statut: 'en_attente'
+    });
+    
+    // Temps estimé pour servir tous les tickets devant + moi
+    const tempsEstimeMinutes = (ticketsEnAttente + 1) * tempsTraitementMoyen;
+    const heureEstimeeFin = heureActuelle + tempsEstimeMinutes;
+    
+    // Vérifier si on peut finir avant la fermeture
+    if (heureEstimeeFin > fermeture) {
+      const heureFermetureStr = horairesJour.fermeture;
+      return res.status(400).json({ 
+        success: false,
+        message: `Impossible d'être servi avant la fermeture (${heureFermetureStr}). Temps d'attente estimé : ${tempsEstimeMinutes} minutes.` 
+      });
+    }
+    
+    // Vérifier si assez de temps pour au moins UN service
+    const tempsPourUnService = heureActuelle + tempsTraitementMoyen;
+    if (tempsPourUnService > fermeture) {
+      return res.status(400).json({ 
+        success: false,
+        message: `Trop tard pour prendre un ticket. L'établissement ferme dans moins de ${tempsTraitementMoyen} minutes.` 
+      });
+    }
+    
+    // 6. Récupérer ou créer la file d'attente
     let file = await FileAttente.findOne({ service: serviceId });
     
     if (!file) {
@@ -46,25 +138,20 @@ exports.prendreTicket = async (req, res) => {
       });
     }
     
-    // Générer le numéro de ticket
+    // 7. Générer le numéro de ticket
     file.dernier_numero_genere += 1;
     const numeroTicket = file.dernier_numero_genere;
     await file.save();
     
-    // Compter la position
-    const position = await Ticket.countDocuments({
-      service: serviceId,
-      statut: 'en_attente'
-    }) + 1;
-    
-    // Créer le ticket
+    // 8. Créer le ticket
     const ticket = await Ticket.create({
       numero: numeroTicket,
       citoyen: req.user._id,
       service: serviceId,
       etablissement: service.etablissement._id,
-      position,
-      statut: 'en_attente'
+      position: ticketsEnAttente + 1,
+      statut: 'en_attente',
+      temps_attente_minutes: tempsEstimeMinutes
     });
     
     // Populer les infos
@@ -72,15 +159,15 @@ exports.prendreTicket = async (req, res) => {
     
     res.status(201).json({
       success: true,
-      message: 'Ticket pris avec succès !',
+      message: 'Ticket créé avec succès !',
       data: ticket
     });
     
   } catch (error) {
-    console.error('Erreur prise ticket:', error);
+    console.error('Erreur création ticket:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Erreur lors de la prise du ticket.',
+      message: 'Erreur lors de la création du ticket.',
       error: error.message 
     });
   }
@@ -120,7 +207,7 @@ exports.detailsTicket = async (req, res) => {
       citoyen: req.user._id
     })
     .populate('service', 'nom temps_traitement_moyen')
-    .populate('etablissement', 'nom adresse telephone');
+    .populate('etablissement', 'nom adresse telephone_etablissement');
     
     if (!ticket) {
       return res.status(404).json({ 
@@ -129,14 +216,15 @@ exports.detailsTicket = async (req, res) => {
       });
     }
     
-    // Calculer temps estimé
+    // Calculer tickets avant moi
     const ticketsAvant = await Ticket.countDocuments({
       service: ticket.service._id,
       statut: 'en_attente',
       position: { $lt: ticket.position }
     });
     
-    const tempsEstime = ticketsAvant * ticket.service.temps_traitement_moyen;
+    // Calculer temps estimé
+    const tempsEstime = ticketsAvant * (ticket.service.temps_traitement_moyen || 15);
     
     res.json({
       success: true,
@@ -172,7 +260,9 @@ exports.annulerTicket = async (req, res) => {
       });
     }
     
+    // ⭐ IMPORTANT : Enregistrer la date d'annulation pour anti-spam
     ticket.statut = 'annule';
+    ticket.date_annulation = new Date();
     await ticket.save();
     
     res.json({

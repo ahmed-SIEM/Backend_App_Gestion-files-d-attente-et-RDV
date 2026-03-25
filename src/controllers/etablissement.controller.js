@@ -89,14 +89,34 @@ exports.monEtablissement = async (req, res) => {
   }
 };
 
-// MODIFIER ÉTABLISSEMENT
+// ⭐ MODIFIER ÉTABLISSEMENT (avec horaires)
 exports.modifierEtablissement = async (req, res) => {
   try {
-    const { nom, description, telephone, email, site_web } = req.body;
+    const { 
+      nom, 
+      description, 
+      telephone_etablissement, 
+      email_etablissement, 
+      site_web,
+      horaires 
+    } = req.body;
+    
+    const updateData = {
+      nom,
+      description,
+      telephone_etablissement,
+      email_etablissement,
+      site_web
+    };
+    
+    // Si horaires fournis, les mettre à jour
+    if (horaires) {
+      updateData.horaires = horaires;
+    }
     
     const etablissement = await Etablissement.findByIdAndUpdate(
       req.user.etablissement,
-      { nom, description, telephone, email, site_web },
+      updateData,
       { new: true, runValidators: true }
     );
     

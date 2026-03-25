@@ -1,226 +1,249 @@
 const jwt = require('jsonwebtoken');
-const { User } = require('../models');
+const bcrypt = require('bcryptjs');
+const User = require('../models/User.model');
+const Etablissement = require('../models/Etablissement.model');
 
-// Générer un token JWT
-const genererToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: '7d' // Token valide 7 jours
-  });
-};
-
+// ============================================
 // INSCRIPTION CITOYEN
+// ============================================
 exports.inscrireCitoyen = async (req, res) => {
   try {
-    const { email, telephone, mot_de_passe, cin, prenom, nom, adresse, gouvernorat } = req.body;
-    
-    // Vérifier si l'email existe déjà
-    const existant = await User.findOne({ email });
-    if (existant) {
-      return res.status(400).json({ 
+    const { prenom, nom, email, mot_de_passe, telephone, cin } = req.body;
+
+    // Vérifier si l'utilisateur existe déjà
+    const utilisateurExistant = await User.findOne({ email });
+    if (utilisateurExistant) {
+      return res.status(400).json({
         success: false,
-        message: 'Cet email est déjà utilisé.' 
+        message: 'Cet email est déjà utilisé'
       });
     }
-    
-    // Créer le citoyen
-    const citoyen = await User.create({
-      email,
-      telephone,
-      mot_de_passe,
-      role: 'citoyen',
-      cin,
+
+    // Créer l'utilisateur
+    const user = await User.create({
       prenom,
       nom,
-      adresse,
-      gouvernorat
+      email,
+      mot_de_passe, // Le pre-save hook va le hasher
+      telephone,
+      cin,
+      role: 'citoyen',
+      statut: 'actif'
     });
-    
-    // Générer le token
-    const token = genererToken(citoyen._id);
-    
+
+    // Générer le token JWT
+    const token = jwt.sign(
+      { userId: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // Retourner l'utilisateur sans le mot de passe
+    const userResponse = user.toObject();
+    delete userResponse.mot_de_passe;
+
     res.status(201).json({
       success: true,
-      message: 'Compte citoyen créé avec succès !',
+      message: 'Compte créé avec succès',
       data: {
-        user: citoyen,
+        user: userResponse,
         token
       }
     });
-    
+
   } catch (error) {
     console.error('Erreur inscription citoyen:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Erreur lors de l\'inscription.',
-      error: error.message 
+      message: error.message
     });
   }
 };
 
+// ============================================
 // INSCRIPTION ÉTABLISSEMENT
+// ============================================
 exports.inscrireEtablissement = async (req, res) => {
   try {
-    const { 
-      // Établissement
-      nom_etablissement, type, description, adresse, ville, code_postal, 
-      gouvernorat, telephone_etablissement, email_etablissement, site_web,
-      // Admin
-      nom_complet, fonction, email_admin, telephone_admin, mot_de_passe,
-      // Documents
-      documents
+    console.log('📦 Données reçues:', req.body);
+    const {
+      // Infos établissement
+      nom,
+      type,
+      gouvernorat,
+      adresse,
+      telephone_etablissement,
+      email_etablissement,
+      // Infos admin
+      admin_prenom,
+      admin_nom,
+      admin_email,
+      admin_telephone,
+      admin_fonction,
+      admin_mot_de_passe
     } = req.body;
-    
+
     // Vérifier si l'email admin existe déjà
-    const existant = await User.findOne({ email: email_admin });
-    if (existant) {
-      return res.status(400).json({ 
+    const existingUser = await User.findOne({ email: admin_email });
+    if (existingUser) {
+      return res.status(400).json({
         success: false,
-        message: 'Cet email est déjà utilisé.' 
+        message: 'Un utilisateur avec cet email existe déjà'
       });
     }
-    
-    const { Etablissement } = require('../models');
-    
+
+    // Vérifier si l'établissement existe déjà
+    const existingEtab = await Etablissement.findOne({ email_etablissement });
+    if (existingEtab) {
+      return res.status(400).json({
+        success: false,
+        message: 'Un établissement avec cet email existe déjà'
+      });
+    }
+
+    // ⭐ CORRECTION - Créer l'utilisateur admin avec nom_complet
+    const admin = await User.create({
+      nom_complet: `${admin_prenom} ${admin_nom}`, // ⭐ nom_complet au lieu de prenom/nom
+      email: admin_email,
+      mot_de_passe: admin_mot_de_passe, // Le pre-save hook va le hasher
+      telephone: admin_telephone,
+      role: 'admin_etablissement',
+      statut: 'en_attente' // En attente de validation
+    });
+
     // Créer l'établissement
     const etablissement = await Etablissement.create({
-      nom: nom_etablissement,
+      nom,
       type,
-      description,
-      adresse,
-      ville,
-      code_postal,
       gouvernorat,
-      telephone: telephone_etablissement,
-      email: email_etablissement,
-      site_web,
-      documents: documents || [],
-      statut: 'en_attente'
+      adresse,
+      telephone_etablissement,
+      email_etablissement,
+      admin_prenom,
+      admin_nom,
+      admin_email,
+      admin_telephone,
+      admin_fonction,
+      admin_id: admin._id,
+      statut: 'en_attente' // En attente de validation super-admin
     });
-    
-    // Créer l'admin
-    const admin = await User.create({
-      email: email_admin,
-      telephone: telephone_admin,
-      mot_de_passe,
-      role: 'admin_etablissement',
-      nom_complet,
-      fonction,
-      etablissement: etablissement._id
-    });
-    
-    // Mettre à jour l'établissement avec l'admin
-    etablissement.admin = admin._id;
-    await etablissement.save();
-    
+
+    // Mettre à jour l'admin avec l'ID établissement
+    admin.etablissement_id = etablissement._id;
+    await admin.save();
+
     res.status(201).json({
       success: true,
-      message: 'Demande d\'inscription envoyée ! Vous recevrez un email une fois validée.',
-      data: {
-        etablissement,
-        admin
-      }
+      message: 'Demande d\'inscription envoyée avec succès. En attente de validation.'
     });
-    
+
   } catch (error) {
     console.error('Erreur inscription établissement:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Erreur lors de l\'inscription.',
-      error: error.message 
+      message: error.message
     });
   }
 };
 
+// ============================================
 // CONNEXION
+// ============================================
 exports.connexion = async (req, res) => {
   try {
-    const { email, mot_de_passe } = req.body;
-    
+    const { email, mot_de_passe, remember_me } = req.body;
+
     // Trouver l'utilisateur
-    const user = await User.findOne({ email }).populate('etablissement');
-    
+    const user = await User.findOne({ email });
     if (!user) {
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
-        message: 'Email ou mot de passe incorrect.' 
+        message: 'Email ou mot de passe incorrect'
       });
     }
-    
+
     // Vérifier le mot de passe
-    const motDePasseValide = await user.verifierMotDePasse(mot_de_passe);
-    
-    if (!motDePasseValide) {
-      return res.status(401).json({ 
+    const isMatch = await user.verifierMotDePasse(mot_de_passe);
+    if (!isMatch) {
+      return res.status(401).json({
         success: false,
-        message: 'Email ou mot de passe incorrect.' 
+        message: 'Email ou mot de passe incorrect'
       });
     }
-    
-    // Vérifier statut établissement pour admin/agent
-    if (user.role === 'admin_etablissement' || user.role === 'agent') {
-      if (user.etablissement?.statut === 'en_attente') {
-        return res.status(403).json({ 
-          success: false,
-          message: 'Votre établissement est en attente de validation.' 
-        });
-      }
-      if (user.etablissement?.statut === 'suspendu') {
-        return res.status(403).json({ 
-          success: false,
-          message: 'Votre établissement est suspendu.' 
-        });
-      }
-      if (user.etablissement?.statut === 'rejete') {
-        return res.status(403).json({ 
-          success: false,
-          message: 'Votre demande d\'inscription a été rejetée.' 
-        });
-      }
+
+    // Vérifier le statut
+    if (user.statut !== 'actif') {
+      return res.status(403).json({
+        success: false,
+        message: 'Votre compte est en attente de validation ou a été suspendu'
+      });
     }
-    
+
+    // ⭐ Durée du token selon "Se souvenir de moi"
+    const tokenExpiry = remember_me ? '7d' : '12h';
+
+    // Générer le token JWT
+    const token = jwt.sign(
+      {
+        userId: user._id,
+        role: user.role,
+        etablissement_id: user.etablissement_id
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: tokenExpiry }
+    );
+
     // Mettre à jour dernière connexion
     user.derniere_connexion = new Date();
     await user.save();
-    
-    // Générer le token
-    const token = genererToken(user._id);
-    
+
+    // Retourner l'utilisateur sans le mot de passe
+    const userResponse = user.toObject();
+    delete userResponse.mot_de_passe;
+
     res.json({
       success: true,
-      message: 'Connexion réussie !',
+      message: 'Connexion réussie',
       data: {
-        user,
-        token
+        user: userResponse,
+        token,
+        remember_me
       }
     });
-    
+
   } catch (error) {
     console.error('Erreur connexion:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Erreur lors de la connexion.',
-      error: error.message 
+      message: error.message
     });
   }
 };
 
+// ============================================
 // MON PROFIL
+// ============================================
 exports.monProfil = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id)
-      .populate('etablissement')
-      .populate('service');
-    
+    const user = await User.findById(req.user._id).select('-mot_de_passe');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
     res.json({
       success: true,
       data: user
     });
-    
+
   } catch (error) {
-    res.status(500).json({ 
+    console.error('Erreur mon profil:', error);
+    res.status(500).json({
       success: false,
-      message: 'Erreur lors de la récupération du profil.',
-      error: error.message 
+      message: error.message
     });
   }
 };
