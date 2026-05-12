@@ -385,8 +385,8 @@ pipeline {
                         # Préserver historique entre builds (courbes de tendance)
                         node -e "const fs=require('fs');try{fs.cpSync('allure-report/history','allure-results/history',{recursive:true})}catch(e){}"
 
-                        # Générer le rapport HTML
-                        allure generate allure-results --clean -o allure-report
+                        # Générer le rapport HTML (le plugin Jenkins le fait aussi en post)
+                        allure generate allure-results --clean -o allure-report || true
                         echo "✅ Rapport Allure généré"
                     '''
                 }
