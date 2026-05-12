@@ -10,15 +10,11 @@
 
 pipeline {
 
-    // Agent Docker dynamique — container créé pour chaque build puis détruit
-    agent {
-        docker {
-            image 'node:18-alpine'           // image Node.js officielle
-            args  '-v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+    agent any
 
-    // Plus besoin de 'tools { nodejs }' — Node est dans le container
+    tools {
+        nodejs 'Node 18'
+    }
 
     environment {
         BACKEND_PORT     = '5000'
