@@ -9,13 +9,13 @@ function initWhatsApp() {
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
     puppeteer: {
       headless: true,
+      protocolTimeout: 120000,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
-        '--no-zygote',
         '--disable-gpu',
       ],
     },
@@ -34,16 +34,32 @@ function initWhatsApp() {
     console.log('✅ WhatsApp connecté et prêt !');
   });
 
+  // Fallback : WhatsApp Web est chargé mais le ready event ne se déclenche pas
+  // (incompatibilité entre whatsapp-web.js et la nouvelle version de WhatsApp Web)
+  // On vérifie directement si la page est utilisable après l'authentification
+  client.on('authenticated', () => {
+    setTimeout(async () => {
+      if (!isReady && client.pupPage) {
+        try {
+          const title = await client.pupPage.title().catch(() => '');
+          if (title.toLowerCase().includes('whatsapp')) {
+            isReady = true;
+            console.log('✅ WhatsApp connecté et prêt !');
+          }
+        } catch (_) {}
+      }
+    }, 15000); // 15s après auth, on vérifie si la page est chargée
+  });
+
   client.on('disconnected', (reason) => {
     isReady = false;
     console.warn('⚠️ WhatsApp déconnecté :', reason);
-    // Reconnexion automatique après 10s
     setTimeout(() => initWhatsApp(), 10000);
   });
 
   client.on('auth_failure', () => {
     isReady = false;
-    console.error('❌ Échec authentification WhatsApp — supprimez .wwebjs_auth et redémarrez');
+    console.error('❌ Échec auth WhatsApp — supprimez .wwebjs_auth et redémarrez');
   });
 
   client.initialize().catch(err => {
@@ -59,7 +75,7 @@ function formatTunisianPhone(phone) {
   if (!phone) return null;
   const clean = phone.replace(/\s+/g, '').replace(/[^\d+]/g, '');
   let number = '';
-  if (clean.startsWith('+216')) number = clean.slice(1); // enlever +
+  if (clean.startsWith('+216')) number = clean.slice(1);
   else if (clean.startsWith('216')) number = clean;
   else if (clean.length === 8) number = `216${clean}`;
   else return null;
