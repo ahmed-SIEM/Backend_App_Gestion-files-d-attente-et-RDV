@@ -23,12 +23,11 @@ pipeline {
         FRONTEND_URL     = "http://localhost:${FRONTEND_PORT}"
         JAVA_HOME        = 'C:\\Program Files\\Microsoft\\jdk-21.0.10.7-hotspot'
         PATH             = "${env.JAVA_HOME}\\bin;${env.PATH}"
-        // Le workspace Jenkins contient le repo Backend
-        // Les autres repos sont clonés au même niveau (../Frontend, etc.)
+        // Tous les repos clonés DANS le workspace Jenkins
         BACKEND_DIR      = '.'
-        FRONTEND_DIR     = '../Frontend'
-        TESTS_FONCT_DIR  = '../filezen-tests-fonctionnels'
-        TESTS_NFONCT_DIR = '../filezen-tests-non-fonctionnels'
+        FRONTEND_DIR     = 'Frontend'
+        TESTS_FONCT_DIR  = 'filezen-tests-fonctionnels'
+        TESTS_NFONCT_DIR = 'filezen-tests-non-fonctionnels'
     }
 
     options {
@@ -56,25 +55,25 @@ pipeline {
                     echo "Build    : #${BUILD_NUMBER}"
                     echo "─────────────────────────────────────"
 
-                    # Frontend
-                    if [ ! -d "../Frontend" ]; then
-                        git clone https://github.com/ahmed-SIEM/Frontend_App_Gestion-files-d-attente-et-RDV.git ../Frontend
+                    # Frontend — cloné DANS le workspace
+                    if [ ! -d "Frontend" ]; then
+                        git clone https://github.com/ahmed-SIEM/Frontend_App_Gestion-files-d-attente-et-RDV.git Frontend
                     else
-                        git -C ../Frontend pull origin main || true
+                        git -C Frontend pull origin main || true
                     fi
 
-                    # Tests fonctionnels
-                    if [ ! -d "../filezen-tests-fonctionnels" ]; then
-                        git clone https://github.com/ahmed-SIEM/filezen-tests-fonctionnels.git ../filezen-tests-fonctionnels
+                    # Tests fonctionnels — cloné DANS le workspace
+                    if [ ! -d "filezen-tests-fonctionnels" ]; then
+                        git clone https://github.com/ahmed-SIEM/filezen-tests-fonctionnels.git filezen-tests-fonctionnels
                     else
-                        git -C ../filezen-tests-fonctionnels pull origin main || true
+                        git -C filezen-tests-fonctionnels pull origin main || true
                     fi
 
-                    # Tests non-fonctionnels
-                    if [ ! -d "../filezen-tests-non-fonctionnels" ]; then
-                        git clone https://github.com/ahmed-SIEM/filezen-tests-non-fonctionnels.git ../filezen-tests-non-fonctionnels
+                    # Tests non-fonctionnels — cloné DANS le workspace
+                    if [ ! -d "filezen-tests-non-fonctionnels" ]; then
+                        git clone https://github.com/ahmed-SIEM/filezen-tests-non-fonctionnels.git filezen-tests-non-fonctionnels
                     else
-                        git -C ../filezen-tests-non-fonctionnels pull origin main || true
+                        git -C filezen-tests-non-fonctionnels pull origin main || true
                     fi
 
                     echo "✅ Tous les repos à jour"
