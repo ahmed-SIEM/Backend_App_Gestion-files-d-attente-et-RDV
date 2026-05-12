@@ -108,7 +108,9 @@ pipeline {
                     steps {
                         dir(TESTS_FONCT_DIR) {
                             sh 'npm ci --prefer-offline'
-                            sh 'npx playwright install chromium --with-deps'
+                            // Installer le binaire Chromium headless sans --with-deps
+                            // (--with-deps requiert su root => échoue dans le container Jenkins)
+                            sh 'npx playwright install chromium'
                         }
                     }
                 }
