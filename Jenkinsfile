@@ -77,14 +77,15 @@ pipeline {
                     fi
 
                     echo "✅ Tous les repos à jour"
-
-                    # Les tests cherchent ../../Backend/ depuis filezen-tests-fonctionnels/
-                    # Dans Jenkins : Backend = workspace root → créer symlink au niveau parent
-                    # ../../Backend/ depuis tests = ../workspace/Backend → pointe vers ici
-                    WORKSPACE_PARENT=$(dirname $(pwd))
-                    ln -sf $(pwd) ${WORKSPACE_PARENT}/Backend 2>/dev/null || true
-                    echo "✅ Symlink Backend créé : ${WORKSPACE_PARENT}/Backend → $(pwd)"
                 '''
+
+                // Fix Jest moduleNameMapper en CI :
+                // env.WORKSPACE (Groovy) = chemin réel du workspace Jenkins
+                // On crée Backend/ → workspace/ pour que ../../Backend/ soit résolu
+                sh """
+                    ln -sf ${env.WORKSPACE} ${env.WORKSPACE}/Backend 2>/dev/null || true
+                    echo "✅ Symlink Backend créé : ${env.WORKSPACE}/Backend → ${env.WORKSPACE}"
+                """
             }
         }
 
