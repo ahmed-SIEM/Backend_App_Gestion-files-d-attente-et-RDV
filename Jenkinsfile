@@ -28,6 +28,8 @@ pipeline {
         FRONTEND_DIR     = 'Frontend'
         TESTS_FONCT_DIR  = 'filezen-tests-fonctionnels'
         TESTS_NFONCT_DIR = 'filezen-tests-non-fonctionnels'
+        // Debian 13 requiert MongoDB >=7.0.3 (mongodb-memory-server default = 6.x)
+        MONGOMS_VERSION  = '7.0.14'
     }
 
     options {
