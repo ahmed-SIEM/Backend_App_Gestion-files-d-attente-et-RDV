@@ -19,7 +19,7 @@ pipeline {
     environment {
         BACKEND_PORT     = '5000'
         FRONTEND_PORT    = '4173'           // vite preview tourne sur 4173
-        API_URL          = "http://localhost:${BACKEND_PORT}"
+        API_URL          = "http://localhost:${BACKEND_PORT}/api"
         FRONTEND_URL     = "http://localhost:${FRONTEND_PORT}"
         JAVA_HOME        = 'C:\\Program Files\\Microsoft\\jdk-21.0.10.7-hotspot'
         PATH             = "${env.JAVA_HOME}\\bin;${env.PATH}"
@@ -106,7 +106,10 @@ pipeline {
                 }
                 stage('Tests fonctionnels') {
                     steps {
-                        dir(TESTS_FONCT_DIR) { sh 'npm ci --prefer-offline' }
+                        dir(TESTS_FONCT_DIR) {
+                            sh 'npm ci --prefer-offline'
+                            sh 'npx playwright install chromium --with-deps'
+                        }
                     }
                 }
                 stage('Tests non-fonctionnels') {
