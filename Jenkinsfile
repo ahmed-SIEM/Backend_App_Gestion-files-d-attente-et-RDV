@@ -21,8 +21,6 @@ pipeline {
         FRONTEND_PORT    = '4173'           // vite preview tourne sur 4173
         API_URL          = "http://localhost:${BACKEND_PORT}/api"
         FRONTEND_URL     = "http://localhost:${FRONTEND_PORT}"
-        JAVA_HOME        = 'C:\\Program Files\\Microsoft\\jdk-21.0.10.7-hotspot'
-        PATH             = "${env.JAVA_HOME}\\bin;${env.PATH}"
         // Tous les repos clonés DANS le workspace Jenkins
         BACKEND_DIR      = '.'
         FRONTEND_DIR     = 'Frontend'
