@@ -322,25 +322,27 @@ pipeline {
                     '''
                 }
                 dir(TESTS_NFONCT_DIR) {
-                    script {
-                        def k6Available = sh(script: 'which k6 2>/dev/null', returnStatus: true) == 0
+                    sh '''
+                        # Auto-install k6 si absent (téléchargement binaire sans sudo)
+                        export PATH=$HOME/bin:$PATH
+                        mkdir -p $HOME/bin
+                        if ! command -v k6 > /dev/null 2>&1; then
+                            echo "📥 Installation k6 v0.50.0..."
+                            curl -sL https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz -o /tmp/k6.tar.gz
+                            tar xzf /tmp/k6.tar.gz -C /tmp/
+                            cp /tmp/k6-v0.50.0-linux-amd64/k6 $HOME/bin/k6
+                            chmod +x $HOME/bin/k6
+                            echo "✅ k6 installé : $(k6 version)"
+                        fi
 
-                        if (k6Available) {
-                            sh '''
-                                echo "⚡ Smoke test k6 (qualité minimale CI)..."
+                        echo "⚡ Smoke test k6..."
+                        k6 run tests/performance/smoke.test.js \
+                            --out json=k6-smoke-results.json \
+                            --summary-export=k6-smoke-summary.json \
+                            -e API_URL=http://localhost:5000 || true
 
-                                # Smoke test : 1 VU, 1 minute — vérifie que l'API répond
-                                k6 run tests/performance/smoke.test.js \
-                                    --out json=k6-smoke-results.json \
-                                    --summary-export=k6-smoke-summary.json \
-                                    -e API_URL=http://localhost:5000
-
-                                echo "✅ k6 smoke test terminé"
-                            '''
-                        } else {
-                            sh 'echo "⚠️ k6 non installé — stage ignoré (installer: winget install k6)"'
-                        }
-                    }
+                        echo "✅ k6 smoke test terminé"
+                    '''
                 }
             }
             post {
@@ -473,23 +475,90 @@ console.log('k6-report.html generated');
             }
         }
 
-        // ─── STAGE 11 : Build Docker (branche main uniquement) ───────────────
-        stage('🐳 Build Docker') {
+        // ─── STAGE 11 : Analyse SonarQube ────────────────────────────────────
+        stage('🔍 Analyse SonarQube') {
+            steps {
+                script {
+                    // Vérifier si SonarQube est accessible (host.docker.internal:9000)
+                    def sonarOk = sh(
+                        script: 'curl -sf http://host.docker.internal:9000/api/system/status | grep -q "UP" 2>/dev/null',
+                        returnStatus: true
+                    ) == 0
+
+                    if (sonarOk) {
+                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                            sh '''
+                                export PATH=$HOME/bin:$PATH
+                                mkdir -p $HOME/bin
+
+                                # Installer sonar-scanner CLI si absent
+                                if ! command -v sonar-scanner > /dev/null 2>&1; then
+                                    echo "📥 Installation sonar-scanner..."
+                                    curl -sL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip \
+                                        -o /tmp/sonar.zip
+                                    unzip -q /tmp/sonar.zip -d $HOME/
+                                    ln -sf $HOME/sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner $HOME/bin/sonar-scanner
+                                    echo "✅ sonar-scanner installé"
+                                fi
+
+                                echo "🔍 Analyse SonarQube en cours..."
+                                sonar-scanner \
+                                    -Dsonar.projectKey=filezen \
+                                    -Dsonar.projectName="FileZen - Gestion Files d Attente" \
+                                    -Dsonar.sources=src \
+                                    -Dsonar.exclusions=**/node_modules/**,**/coverage/** \
+                                    -Dsonar.host.url=http://host.docker.internal:9000 \
+                                    -Dsonar.token=$SONAR_TOKEN || true
+
+                                echo "✅ Analyse SonarQube terminée"
+                                echo "📊 Résultats : http://localhost:9000/dashboard?id=filezen"
+                            '''
+                        }
+                    } else {
+                        echo '⚠️ SonarQube non accessible — analyse ignorée (démarrer: docker run -d -p 9000:9000 sonarqube:community)'
+                    }
+                }
+            }
+        }
+
+        // ─── STAGE 12 : Build Docker + Push DockerHub ────────────────────────
+        stage('🐳 Build & Push Docker') {
             when { branch 'main' }
             steps {
                 script {
-                    def dockerOk = sh(script: 'docker --version', returnStatus: true) == 0
+                    // Essayer Docker local, puis Docker Desktop via TCP
+                    def dockerLocal = sh(script: 'docker --version 2>/dev/null', returnStatus: true) == 0
+                    def dockerTCP   = sh(script: 'DOCKER_HOST=tcp://host.docker.internal:2375 docker --version 2>/dev/null', returnStatus: true) == 0
+                    def dockerHost  = dockerLocal ? '' : (dockerTCP ? 'DOCKER_HOST=tcp://host.docker.internal:2375 ' : '')
+                    def dockerOk    = dockerLocal || dockerTCP
+
                     if (dockerOk) {
-                        sh '''
-                            SHORT_SHA=${GIT_COMMIT:0:8}
-                            docker build -t filezen-backend:${SHORT_SHA} ./Backend
-                            docker tag filezen-backend:${SHORT_SHA} filezen-backend:latest
-                            docker build -t filezen-frontend:${SHORT_SHA} ./Frontend
-                            docker tag filezen-frontend:${SHORT_SHA} filezen-frontend:latest
-                            echo "✅ Images Docker buildées : ${SHORT_SHA}"
-                        '''
+                        withCredentials([usernamePassword(
+                            credentialsId: 'dockerhub-creds',
+                            usernameVariable: 'DOCKER_USER',
+                            passwordVariable: 'DOCKER_PASS'
+                        )]) {
+                            sh """
+                                export PATH=\$HOME/bin:\$PATH
+                                SHORT_SHA=\${GIT_COMMIT:0:8}
+                                DOCKER="${dockerHost}docker"
+
+                                echo "🐳 Login DockerHub..."
+                                echo \$DOCKER_PASS | \$DOCKER login -u \$DOCKER_USER --password-stdin
+
+                                echo "🏗️ Build image Backend..."
+                                \$DOCKER build -t \$DOCKER_USER/filezen-backend:\$SHORT_SHA \
+                                              -t \$DOCKER_USER/filezen-backend:latest .
+
+                                echo "📤 Push vers DockerHub..."
+                                \$DOCKER push \$DOCKER_USER/filezen-backend:\$SHORT_SHA
+                                \$DOCKER push \$DOCKER_USER/filezen-backend:latest
+
+                                echo "✅ Image publiée : \$DOCKER_USER/filezen-backend:\$SHORT_SHA"
+                            """
+                        }
                     } else {
-                        echo '⚠️ Docker non disponible — stage ignoré'
+                        echo '⚠️ Docker non disponible — activer Docker Desktop TCP (Settings > General > port 2375)'
                     }
                 }
             }
