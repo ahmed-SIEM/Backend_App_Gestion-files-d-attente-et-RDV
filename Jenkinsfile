@@ -480,6 +480,40 @@ console.log('k6-report.html generated');
             }
         }
 
+        // ─── STAGE 11c : Détection Anomalies ML ──────────────────────────────
+        stage('🧠 Détection Anomalies ML') {
+            steps {
+                script {
+                    sh """
+                        echo "🧠 Installation dépendances Python ML..."
+                        pip3 install --quiet --user -r ml-model/requirements.txt 2>/dev/null \
+                            || pip install --quiet --user -r ml-model/requirements.txt 2>/dev/null \
+                            || true
+
+                        echo "🧠 Entraînement Isolation Forest + prédiction..."
+                        python3 ml-model/predict.py \
+                            ${TESTS_NFONCT_DIR}/k6-smoke-summary.json \
+                            ${TESTS_FONCT_DIR}/allure-results \
+                            ${TESTS_FONCT_DIR}/ml-report.html \
+                            /var/jenkins_home/ml-history.csv \
+                            /var/jenkins_home/ml-model.pkl || true
+                    """
+                }
+            }
+            post {
+                always {
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: "${TESTS_FONCT_DIR}",
+                        reportFiles: 'ml-report.html',
+                        reportName: '🧠 ML Anomaly Detection'
+                    ])
+                }
+            }
+        }
+
         // ─── STAGE 12 : Analyse SonarQube ────────────────────────────────────
         stage('🔍 Analyse SonarQube') {
             steps {

@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
     libcairo2 libdbus-1-3 libexpat1 libx11-6 libxcb1 libxext6 \
     wget unzip curl gnupg \
+    python3 python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # ── MongoDB 7.0 (pour k6 + tests E2E sans Docker externe) ─────────────────────
