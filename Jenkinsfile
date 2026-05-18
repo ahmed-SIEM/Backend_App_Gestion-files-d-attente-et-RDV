@@ -486,15 +486,17 @@ console.log('k6-report.html generated');
                 script {
                     sh """
                         echo "🧠 Installation dépendances Python ML..."
-                        pip3 install --quiet --user -r ml-model/requirements.txt 2>/dev/null \
-                            || pip install --quiet --user -r ml-model/requirements.txt 2>/dev/null \
-                            || true
+                        pip3 install --quiet --user --break-system-packages \
+                            scikit-learn pandas numpy matplotlib 2>/dev/null \
+                        || pip3 install --quiet --user \
+                            scikit-learn pandas numpy matplotlib 2>/dev/null \
+                        || true
 
                         echo "🧠 Entraînement Isolation Forest + prédiction..."
                         python3 ml-model/predict.py \
-                            ${TESTS_NFONCT_DIR}/k6-smoke-summary.json \
-                            ${TESTS_FONCT_DIR}/allure-results \
-                            ${TESTS_FONCT_DIR}/ml-report.html \
+                            "${TESTS_NFONCT_DIR}/k6-smoke-summary.json" \
+                            "${TESTS_FONCT_DIR}/allure-results" \
+                            "${TESTS_FONCT_DIR}/ml-report.html" \
                             /var/jenkins_home/ml-history.csv \
                             /var/jenkins_home/ml-model.pkl || true
                     """
