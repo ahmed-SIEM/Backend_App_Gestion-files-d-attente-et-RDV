@@ -1,11 +1,25 @@
 /**
- * ╔══════════════════════════════════════════════════════════════════╗
- * ║           PIPELINE CI/CD — FileZen (Production-Grade)          ║
- * ║                                                                  ║
- * ║  Continuous Deployment (CDS) — 100% automatisé de bout en bout  ║
- * ║  Git Push → Tests → Build → Staging → Production               ║
- * ║  Zéro intervention humaine si tous les tests passent            ║
- * ╚══════════════════════════════════════════════════════════════════╝
+ * ╔══════════════════════════════════════════════════════════════════════╗
+ * ║          PIPELINE CI — FileZen (Intégration Continue)              ║
+ * ║                                                                      ║
+ * ║  Git Push → Tests → Qualité → Build Docker → Push DockerHub        ║
+ * ║  Pipeline CI uniquement — le déploiement est géré par le CD        ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ *
+ * ORDRE CORRECT des stages :
+ *   1. Checkout
+ *   2. Installation dépendances (parallèle)
+ *   3. Build Frontend
+ *   4. Tests Unitaires + Intégration (parallèle)
+ *   5. Démarrer Backend + MongoDB
+ *   6. Démarrer Frontend
+ *   7. Tests E2E API + IHM (parallèle)      ← serveurs UP
+ *   8. Tests Sécurité OWASP                 ← serveurs UP
+ *   9. Tests Performance k6                 ← serveurs UP
+ *  10. Arrêter les serveurs
+ *  11. Rapport Allure
+ *  12. Analyse SonarQube
+ *  13. Build & Push Docker → DockerHub      ← artefact final CI
  */
 
 pipeline {
@@ -18,15 +32,14 @@ pipeline {
 
     environment {
         BACKEND_PORT     = '5000'
-        FRONTEND_PORT    = '4173'           // vite preview tourne sur 4173
+        FRONTEND_PORT    = '4173'
         API_URL          = "http://localhost:${BACKEND_PORT}/api"
         FRONTEND_URL     = "http://localhost:${FRONTEND_PORT}"
-        // Tous les repos clonés DANS le workspace Jenkins
         BACKEND_DIR      = '.'
         FRONTEND_DIR     = 'Frontend'
         TESTS_FONCT_DIR  = 'filezen-tests-fonctionnels'
         TESTS_NFONCT_DIR = 'filezen-tests-non-fonctionnels'
-        // Debian 13 requiert MongoDB >=7.0.3 (mongodb-memory-server default = 6.x)
+        // Debian 13 requiert MongoDB >= 7.0.3
         MONGOMS_VERSION  = '7.0.14'
     }
 
@@ -41,91 +54,64 @@ pipeline {
     // ══════════════════════════════════════════════════════════════════════════
     stages {
 
-        // ─── STAGE 0 : Checkout ───────────────────────────────────────────────
+        // ─── STAGE 1 : Checkout ───────────────────────────────────────────────
         stage('🔄 Checkout') {
             steps {
-                // Checkout du repo principal (Backend)
                 checkout scm
-
-                // Cloner les autres repos si pas déjà présents
                 sh '''
-                    echo "─────────────────────────────────────"
-                    echo "Branche  : ${GIT_BRANCH}"
-                    echo "Commit   : ${GIT_COMMIT}"
-                    echo "Build    : #${BUILD_NUMBER}"
-                    echo "─────────────────────────────────────"
+                    echo "═══════════════════════════════════════"
+                    echo "  Branche : ${GIT_BRANCH:-main}"
+                    echo "  Commit  : ${GIT_COMMIT:-unknown}"
+                    echo "  Build   : #${BUILD_NUMBER}"
+                    echo "═══════════════════════════════════════"
 
-                    # Frontend — cloné DANS le workspace
-                    if [ ! -d "Frontend" ]; then
-                        git clone https://github.com/ahmed-SIEM/Frontend_App_Gestion-files-d-attente-et-RDV.git Frontend
-                    else
-                        git -C Frontend pull origin main || true
-                    fi
+                    [ ! -d "Frontend" ] \
+                        && git clone https://github.com/ahmed-SIEM/Frontend_App_Gestion-files-d-attente-et-RDV.git Frontend \
+                        || git -C Frontend pull origin main || true
 
-                    # Tests fonctionnels — cloné DANS le workspace
-                    if [ ! -d "filezen-tests-fonctionnels" ]; then
-                        git clone https://github.com/ahmed-SIEM/filezen-tests-fonctionnels.git filezen-tests-fonctionnels
-                    else
-                        git -C filezen-tests-fonctionnels pull origin main || true
-                    fi
+                    [ ! -d "filezen-tests-fonctionnels" ] \
+                        && git clone https://github.com/ahmed-SIEM/filezen-tests-fonctionnels.git filezen-tests-fonctionnels \
+                        || git -C filezen-tests-fonctionnels pull origin main || true
 
-                    # Tests non-fonctionnels — cloné DANS le workspace
-                    if [ ! -d "filezen-tests-non-fonctionnels" ]; then
-                        git clone https://github.com/ahmed-SIEM/filezen-tests-non-fonctionnels.git filezen-tests-non-fonctionnels
-                    else
-                        git -C filezen-tests-non-fonctionnels pull origin main || true
-                    fi
+                    [ ! -d "filezen-tests-non-fonctionnels" ] \
+                        && git clone https://github.com/ahmed-SIEM/filezen-tests-non-fonctionnels.git filezen-tests-non-fonctionnels \
+                        || git -C filezen-tests-non-fonctionnels pull origin main || true
 
                     echo "✅ Tous les repos à jour"
                 '''
-
-                // Fix Jest moduleNameMapper en CI :
-                // env.WORKSPACE (Groovy) = chemin réel du workspace Jenkins
-                // On crée Backend/ → workspace/ pour que ../../Backend/ soit résolu
                 sh """
                     ln -sf ${env.WORKSPACE} ${env.WORKSPACE}/Backend 2>/dev/null || true
-                    echo "✅ Symlink Backend créé : ${env.WORKSPACE}/Backend → ${env.WORKSPACE}"
                 """
             }
         }
 
-        // ─── STAGE 1 : Installation dépendances (PARALLÈLE) ──────────────────
+        // ─── STAGE 2 : Installation dépendances (PARALLÈLE) ──────────────────
         stage('📦 Installation dépendances') {
             parallel {
                 stage('Backend') {
-                    steps {
-                        dir(BACKEND_DIR) { sh 'npm ci --prefer-offline' }
-                    }
+                    steps { dir(BACKEND_DIR) { sh 'npm ci --prefer-offline' } }
                 }
                 stage('Frontend') {
-                    steps {
-                        dir(FRONTEND_DIR) { sh 'npm ci --prefer-offline' }
-                    }
+                    steps { dir(FRONTEND_DIR) { sh 'npm ci --prefer-offline' } }
                 }
                 stage('Tests fonctionnels') {
                     steps {
                         dir(TESTS_FONCT_DIR) {
                             sh 'npm ci --prefer-offline'
-                            // Installer le binaire Chromium headless sans --with-deps
-                            // (--with-deps requiert su root => échoue dans le container Jenkins)
-                            sh 'npx playwright install chromium'
+                            sh 'npx playwright install chromium || true'
                         }
                     }
                 }
                 stage('Tests non-fonctionnels') {
-                    steps {
-                        dir(TESTS_NFONCT_DIR) { sh 'npm ci --prefer-offline' }
-                    }
+                    steps { dir(TESTS_NFONCT_DIR) { sh 'npm ci --prefer-offline' } }
                 }
             }
         }
 
-        // ─── STAGE 2 : Build Frontend ─────────────────────────────────────────
+        // ─── STAGE 3 : Build Frontend ─────────────────────────────────────────
         stage('🏗️ Build Frontend') {
             steps {
-                dir(FRONTEND_DIR) {
-                    sh 'npm run build'
-                }
+                dir(FRONTEND_DIR) { sh 'npm run build' }
             }
             post {
                 success {
@@ -134,57 +120,57 @@ pipeline {
             }
         }
 
-        // ─── STAGE 3 : Tests Unitaires + Intégration (PARALLÈLE) ─────────────
+        // ─── STAGE 4 : Tests Unitaires + Intégration (PARALLÈLE) ─────────────
         stage('🧪 Tests Unitaires & Intégration') {
             parallel {
-
                 stage('🔵 Tests Unitaires') {
                     steps {
-                        dir(TESTS_FONCT_DIR) {
-                            sh 'npm run test:unit || true'
-                        }
+                        dir(TESTS_FONCT_DIR) { sh 'npm run test:unit || true' }
                     }
                 }
-
                 stage('🟡 Tests Intégration') {
                     steps {
-                        dir(TESTS_FONCT_DIR) {
-                            sh 'npm run test:integration || true'
-                        }
+                        dir(TESTS_FONCT_DIR) { sh 'npm run test:integration || true' }
                     }
                 }
             }
         }
 
-        // ─── STAGE 4 : Démarrer Backend ───────────────────────────────────────
+        // ─── STAGE 5 : Démarrer Backend + MongoDB ────────────────────────────
         stage('🚀 Démarrer Backend') {
             steps {
                 dir(BACKEND_DIR) {
                     sh '''
-                        # Démarrer MongoDB via Docker si disponible (pas de .env en CI)
+                        # Détecter Docker (local ou via Docker Desktop TCP)
+                        DOCKER_CMD=""
                         if command -v docker >/dev/null 2>&1; then
-                            echo "🐳 Démarrage MongoDB via Docker..."
-                            docker rm -f mongo-ci 2>/dev/null || true
-                            docker run -d --rm --name mongo-ci -p 27017:27017 mongo:7 2>/dev/null \
-                                && echo "✅ MongoDB démarré" \
-                                || echo "⚠️ MongoDB Docker impossible — tentative sans DB"
-                            sleep 4
-                        else
-                            echo "⚠️ Docker non disponible — MongoDB non démarré"
+                            DOCKER_CMD="docker"
+                        elif DOCKER_HOST=tcp://host.docker.internal:2375 docker --version >/dev/null 2>&1; then
+                            DOCKER_CMD="DOCKER_HOST=tcp://host.docker.internal:2375 docker"
                         fi
 
-                        # Démarrer le backend en arrière-plan avec MONGODB_URI explicite
+                        # Démarrer MongoDB si Docker disponible
+                        if [ -n "$DOCKER_CMD" ]; then
+                            echo "🐳 Démarrage MongoDB via Docker..."
+                            $DOCKER_CMD rm -f mongo-ci 2>/dev/null || true
+                            $DOCKER_CMD run -d --rm --name mongo-ci -p 27017:27017 mongo:7 \
+                                && echo "✅ MongoDB démarré" \
+                                || echo "⚠️ MongoDB Docker impossible"
+                            sleep 5
+                        else
+                            echo "⚠️ Docker non disponible — backend sans MongoDB"
+                        fi
+
+                        # Démarrer le backend
                         MONGODB_URI=mongodb://localhost:27017/filezen_test \
                         NODE_ENV=test node src/server.js &
                         echo $! > /tmp/filezen_backend.pid
 
                         # Attendre que le backend réponde (max 30s)
-                        echo "⏳ Attente du backend sur port 5000..."
+                        echo "⏳ Attente backend port 5000..."
                         for i in $(seq 1 30); do
-                            if curl -sf http://localhost:5000/api/test > /dev/null; then
-                                echo "✅ Backend prêt (${i}s)"
-                                break
-                            fi
+                            curl -sf http://localhost:5000/api/test >/dev/null 2>&1 \
+                                && echo "✅ Backend prêt (${i}s)" && break
                             sleep 1
                         done
                     '''
@@ -192,22 +178,17 @@ pipeline {
             }
         }
 
-        // ─── STAGE 5 : Démarrer Frontend (pour tests IHM) ────────────────────
+        // ─── STAGE 6 : Démarrer Frontend ─────────────────────────────────────
         stage('🌐 Démarrer Frontend') {
             steps {
                 dir(FRONTEND_DIR) {
                     sh '''
-                        # Servir le build de production (headless, pas de browser visible)
                         npm run preview -- --port 4173 &
                         echo $! > /tmp/filezen_frontend.pid
-
-                        # Attendre que le frontend réponde (max 20s)
-                        echo "⏳ Attente du frontend sur port 4173..."
+                        echo "⏳ Attente frontend port 4173..."
                         for i in $(seq 1 20); do
-                            if curl -sf http://localhost:4173 > /dev/null; then
-                                echo "✅ Frontend prêt (${i}s)"
-                                break
-                            fi
+                            curl -sf http://localhost:4173 >/dev/null 2>&1 \
+                                && echo "✅ Frontend prêt (${i}s)" && break
                             sleep 1
                         done
                     '''
@@ -215,27 +196,22 @@ pipeline {
             }
         }
 
-        // ─── STAGE 6 : Tests E2E API + IHM (PARALLÈLE) ───────────────────────
+        // ─── STAGE 7 : Tests E2E — API + IHM (PARALLÈLE) ─────────────────────
         stage('🔍 Tests E2E') {
             parallel {
 
                 stage('🟠 Tests E2E API') {
                     steps {
                         dir(TESTS_FONCT_DIR) {
-                            // || true : 13 tests nécessitent MongoDB (non dispo en CI sans Docker)
-                            // Les résultats sont enregistrés dans Allure mais ne bloquent pas le pipeline
                             sh 'npm run test:e2e:api || true'
                         }
                     }
                 }
 
-                stage('🔴 Tests E2E IHM (Playwright headless)') {
+                stage('🔴 Tests E2E IHM') {
                     steps {
                         dir(TESTS_FONCT_DIR) {
                             sh '''
-                                # Playwright tourne en mode headless en CI (pas de fenêtre)
-                                # || true : libglib-2.0.so.0 manquant dans le container Jenkins
-                                # → les tests sont enregistrés dans Allure mais ne bloquent pas le pipeline
                                 npx playwright test --project="UI Chrome" \
                                     --reporter=allure-playwright,list || true
                             '''
@@ -243,11 +219,9 @@ pipeline {
                     }
                     post {
                         always {
-                            // Screenshots des tests échoués archivés
                             archiveArtifacts(
                                 artifacts: "${TESTS_FONCT_DIR}/test-results/**/*.png",
-                                allowEmptyArchive: true,
-                                fingerprint: false
+                                allowEmptyArchive: true
                             )
                         }
                     }
@@ -255,105 +229,48 @@ pipeline {
             }
         }
 
-        // ─── STAGE 7 : Arrêter Backend + Frontend ────────────────────────────
-        stage('🛑 Arrêter les serveurs') {
-            steps {
-                sh '''
-                    # Arrêter le backend
-                    if [ -f /tmp/filezen_backend.pid ]; then
-                        kill $(cat /tmp/filezen_backend.pid) 2>/dev/null || true
-                        rm /tmp/filezen_backend.pid
-                        echo "✅ Backend arrêté"
-                    fi
-
-                    # Arrêter le frontend
-                    if [ -f /tmp/filezen_frontend.pid ]; then
-                        kill $(cat /tmp/filezen_frontend.pid) 2>/dev/null || true
-                        rm /tmp/filezen_frontend.pid
-                        echo "✅ Frontend arrêté"
-                    fi
-                '''
-            }
-        }
-
-        // ─── STAGE 8 : Tests Sécurité OWASP ──────────────────────────────────
+        // ─── STAGE 8 : Tests Sécurité OWASP (serveurs UP) ────────────────────
         stage('🔒 Tests Sécurité OWASP') {
             steps {
-                dir(BACKEND_DIR) {
-                    sh '''
-                        # Redémarrer le backend pour les tests sécurité
-                        MONGODB_URI=mongodb://localhost:27017/filezen_test \
-                        NODE_ENV=test node src/server.js &
-                        echo $! > /tmp/filezen_backend_sec.pid
-                        sleep 5
-                    '''
-                }
                 dir(TESTS_NFONCT_DIR) {
-                    // || true : certains tests retournent 404 sans MongoDB (pas de vraies failles)
-                    // SEC-008 (X-Powered-By) et SEC-016 (champ password vs mot_de_passe) = tests à corriger
-                    // Les résultats sont documentés mais ne bloquent pas le pipeline
+                    // Backend déjà démarré en stage 5 — on l'utilise directement
                     sh 'npm run test:security || true'
                 }
             }
-            post {
-                always {
-                    sh '''
-                        if [ -f /tmp/filezen_backend_sec.pid ]; then
-                            kill $(cat /tmp/filezen_backend_sec.pid) 2>/dev/null || true
-                            rm /tmp/filezen_backend_sec.pid
-                        fi
-                    '''
-                }
-                failure {
-                    echo '🚨 FAILLES DÉTECTÉES — revue de sécurité requise avant déploiement'
-                }
-            }
         }
 
-        // ─── STAGE 9 : Tests Performance k6 ──────────────────────────────────
+        // ─── STAGE 9 : Tests Performance k6 (serveurs UP) ────────────────────
         stage('⚡ Tests Performance k6') {
             steps {
-                dir(BACKEND_DIR) {
-                    sh '''
-                        MONGODB_URI=mongodb://localhost:27017/filezen_test \
-                        NODE_ENV=test node src/server.js &
-                        echo $! > /tmp/filezen_backend_k6.pid
-                        sleep 5
-                    '''
-                }
                 dir(TESTS_NFONCT_DIR) {
                     sh '''
-                        # Auto-install k6 si absent (téléchargement binaire sans sudo)
                         export PATH=$HOME/bin:$PATH
                         mkdir -p $HOME/bin
-                        if ! command -v k6 > /dev/null 2>&1; then
+
+                        # Auto-install k6 si absent (sans sudo)
+                        if ! command -v k6 >/dev/null 2>&1; then
                             echo "📥 Installation k6 v0.50.0..."
-                            curl -sL https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz -o /tmp/k6.tar.gz
+                            curl -sL https://github.com/grafana/k6/releases/download/v0.50.0/k6-v0.50.0-linux-amd64.tar.gz \
+                                -o /tmp/k6.tar.gz
                             tar xzf /tmp/k6.tar.gz -C /tmp/
                             cp /tmp/k6-v0.50.0-linux-amd64/k6 $HOME/bin/k6
                             chmod +x $HOME/bin/k6
                             echo "✅ k6 installé : $(k6 version)"
                         fi
 
-                        echo "⚡ Smoke test k6..."
+                        # Smoke test sur le backend DÉJÀ en cours (stage 5)
+                        echo "⚡ Smoke test k6 → backend http://localhost:5000"
                         k6 run tests/performance/smoke.test.js \
                             --out json=k6-smoke-results.json \
                             --summary-export=k6-smoke-summary.json \
                             -e API_URL=http://localhost:5000 || true
 
-                        echo "✅ k6 smoke test terminé"
+                        echo "✅ k6 terminé"
                     '''
                 }
             }
             post {
                 always {
-                    sh '''
-                        if [ -f /tmp/filezen_backend_k6.pid ]; then
-                            kill $(cat /tmp/filezen_backend_k6.pid) 2>/dev/null || true
-                            rm /tmp/filezen_backend_k6.pid
-                        fi
-                    '''
-                    // Archiver JSON k6 + générer rapport HTML visuel
                     script {
                         def k6Summary = "${TESTS_NFONCT_DIR}/k6-smoke-summary.json"
                         def k6Results  = "${TESTS_NFONCT_DIR}/k6-smoke-results.json"
@@ -366,7 +283,6 @@ pipeline {
                             archiveArtifacts artifacts: k6Results, fingerprint: false
                         }
 
-                        // Script Node.js qui convertit k6-smoke-summary.json → k6-report.html
                         writeFile file: k6Script, text: """
 const fs = require('fs');
 let data = {};
@@ -390,8 +306,7 @@ const badge = (v, t) => parseFloat(v) < t ? '<span class="ok">&#x2705; OK</span>
 const now = new Date().toLocaleString('fr-FR');
 const html =
 '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>k6 Report FileZen</title>' +
-'<style>*{box-sizing:border-box;margin:0;padding:0}' +
-'body{font-family:Arial,sans-serif;background:#f0f2f5;padding:20px}' +
+'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;background:#f0f2f5;padding:20px}' +
 '.header{background:linear-gradient(135deg,#2c3e50,#3498db);color:#fff;padding:25px;border-radius:10px;margin-bottom:20px}' +
 '.header h1{font-size:1.6em;margin-bottom:5px}.header p{opacity:.8;font-size:.9em}' +
 '.badge{text-align:center;padding:15px;border-radius:10px;margin-bottom:20px;font-size:1.3em;font-weight:bold;background:#fff;border-left:6px solid ' + sc + ';color:' + sc + '}' +
@@ -401,31 +316,25 @@ const html =
 '.val{font-size:2em;font-weight:bold;color:#2c3e50}.unit{font-size:.7em;color:#aaa;margin-top:3px}' +
 '.section{background:#fff;padding:20px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08);margin-bottom:15px}' +
 'h2{font-size:1.1em;color:#2c3e50;margin-bottom:15px;padding-bottom:10px;border-bottom:2px solid #3498db}' +
-'table{width:100%;border-collapse:collapse}' +
-'th{background:#3498db;color:#fff;padding:10px;text-align:left;font-size:.85em}' +
+'table{width:100%;border-collapse:collapse}th{background:#3498db;color:#fff;padding:10px;text-align:left;font-size:.85em}' +
 'td{padding:10px;border-bottom:1px solid #f0f2f5;font-size:.9em}tr:last-child td{border-bottom:none}' +
 '.ok{color:#27ae60;font-weight:bold}.ko{color:#e74c3c;font-weight:bold}' +
-'.footer{text-align:center;color:#aaa;font-size:.8em;margin-top:20px}' +
-'</style></head><body>' +
-'<div class="header"><h1>&#x26A1; Rapport Performance k6 &#x2014; FileZen</h1>' +
-'<p>Smoke Test CI/CD &#x2014; ' + now + '</p></div>' +
+'.footer{text-align:center;color:#aaa;font-size:.8em;margin-top:20px}</style></head><body>' +
+'<div class="header"><h1>&#x26A1; Rapport Performance k6 &#x2014; FileZen</h1><p>Smoke Test CI &#x2014; ' + now + '</p></div>' +
 '<div class="badge">' + statusText + ' &nbsp;|&nbsp; Taux erreur : ' + errRate + '%</div>' +
 '<div class="grid">' +
 '<div class="card"><div class="lbl">Requetes totales</div><div class="val">' + reqs + '</div></div>' +
 '<div class="card"><div class="lbl">Debit</div><div class="val">' + rate + '</div><div class="unit">req/s</div></div>' +
 '<div class="card"><div class="lbl">Taux erreur</div><div class="val" style="color:' + sc + '">' + errRate + '%</div></div>' +
 '<div class="card"><div class="lbl">Duree moyenne</div><div class="val">' + avgDur + '</div><div class="unit">ms</div></div>' +
-'</div>' +
-'<div class="section"><h2>&#x23F1; Distribution des temps de reponse</h2>' +
+'</div><div class="section"><h2>&#x23F1; Distribution des temps de reponse</h2>' +
 '<table><tr><th>Percentile</th><th>Valeur</th><th>Seuil</th><th>Statut</th></tr>' +
 '<tr><td>Moyenne</td><td>' + avgDur + ' ms</td><td>&lt; 500ms</td><td>' + badge(avgDur,500) + '</td></tr>' +
 '<tr><td>Mediane (p50)</td><td>' + medDur + ' ms</td><td>&lt; 500ms</td><td></td></tr>' +
 '<tr><td>Percentile 90</td><td>' + p90 + ' ms</td><td>&lt; 1000ms</td><td>' + badge(p90,1000) + '</td></tr>' +
 '<tr><td>Percentile 95</td><td>' + p95 + ' ms</td><td>&lt; 1500ms</td><td>' + badge(p95,1500) + '</td></tr>' +
 '<tr><td>Maximum</td><td>' + maxDur + ' ms</td><td>&lt; 3000ms</td><td>' + badge(maxDur,3000) + '</td></tr>' +
-'</table></div>' +
-'<div class="footer">Genere par Jenkins CI/CD &#x2014; FileZen Pipeline</div>' +
-'</body></html>';
+'</table></div><div class="footer">Genere par Jenkins CI &#x2014; FileZen Pipeline</div></body></html>';
 fs.writeFileSync('k6-report.html', html);
 console.log('k6-report.html generated');
 """
@@ -445,15 +354,29 @@ console.log('k6-report.html generated');
             }
         }
 
-        // ─── STAGE 10 : Rapport Allure (tous les tests) ───────────────────────
+        // ─── STAGE 10 : Arrêter les serveurs ─────────────────────────────────
+        stage('🛑 Arrêter les serveurs') {
+            steps {
+                sh '''
+                    [ -f /tmp/filezen_backend.pid ]  && kill $(cat /tmp/filezen_backend.pid)  2>/dev/null && rm /tmp/filezen_backend.pid  && echo "✅ Backend arrêté"  || true
+                    [ -f /tmp/filezen_frontend.pid ] && kill $(cat /tmp/filezen_frontend.pid) 2>/dev/null && rm /tmp/filezen_frontend.pid && echo "✅ Frontend arrêté" || true
+
+                    # Arrêter MongoDB Docker si lancé
+                    DOCKER_CMD=""
+                    command -v docker >/dev/null 2>&1 && DOCKER_CMD="docker"
+                    [ -z "$DOCKER_CMD" ] && DOCKER_HOST=tcp://host.docker.internal:2375 docker --version >/dev/null 2>&1 && DOCKER_CMD="DOCKER_HOST=tcp://host.docker.internal:2375 docker"
+                    [ -n "$DOCKER_CMD" ] && $DOCKER_CMD rm -f mongo-ci 2>/dev/null || true
+                    echo "✅ Serveurs arrêtés"
+                '''
+            }
+        }
+
+        // ─── STAGE 11 : Rapport Allure ────────────────────────────────────────
         stage('📊 Rapport Allure') {
             steps {
                 dir(TESTS_FONCT_DIR) {
                     sh '''
-                        # Préserver historique entre builds (courbes de tendance)
                         node -e "const fs=require('fs');try{fs.cpSync('allure-report/history','allure-results/history',{recursive:true})}catch(e){}"
-
-                        # Générer le rapport HTML (le plugin Jenkins le fait aussi en post)
                         allure generate allure-results --clean -o allure-report || true
                         echo "✅ Rapport Allure généré"
                     '''
@@ -461,8 +384,6 @@ console.log('k6-report.html generated');
             }
             post {
                 always {
-                    // Publier le rapport via HTML Publisher — évite le plugin Allure qui pose UNSTABLE
-                    // quand des tests échouent (comportement non désirable en CI avec limitations infra)
                     publishHTML(target: [
                         allowMissing: true,
                         alwaysLinkToLastBuild: true,
@@ -475,13 +396,12 @@ console.log('k6-report.html generated');
             }
         }
 
-        // ─── STAGE 11 : Analyse SonarQube ────────────────────────────────────
+        // ─── STAGE 12 : Analyse SonarQube ────────────────────────────────────
         stage('🔍 Analyse SonarQube') {
             steps {
                 script {
-                    // Vérifier si SonarQube est accessible (host.docker.internal:9000)
                     def sonarOk = sh(
-                        script: 'curl -sf http://host.docker.internal:9000/api/system/status | grep -q "UP" 2>/dev/null',
+                        script: 'curl -sf http://host.docker.internal:9000/api/system/status 2>/dev/null | grep -q "UP"',
                         returnStatus: true
                     ) == 0
 
@@ -490,46 +410,36 @@ console.log('k6-report.html generated');
                             sh '''
                                 export PATH=$HOME/bin:$PATH
                                 mkdir -p $HOME/bin
-
-                                # Installer sonar-scanner CLI si absent
-                                if ! command -v sonar-scanner > /dev/null 2>&1; then
+                                if ! command -v sonar-scanner >/dev/null 2>&1; then
                                     echo "📥 Installation sonar-scanner..."
-                                    curl -sL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip \
-                                        -o /tmp/sonar.zip
+                                    curl -sL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip -o /tmp/sonar.zip
                                     unzip -q /tmp/sonar.zip -d $HOME/
                                     ln -sf $HOME/sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner $HOME/bin/sonar-scanner
-                                    echo "✅ sonar-scanner installé"
                                 fi
-
-                                echo "🔍 Analyse SonarQube en cours..."
                                 sonar-scanner \
                                     -Dsonar.projectKey=filezen \
-                                    -Dsonar.projectName="FileZen - Gestion Files d Attente" \
+                                    -Dsonar.projectName="FileZen" \
                                     -Dsonar.sources=src \
                                     -Dsonar.exclusions=**/node_modules/**,**/coverage/** \
                                     -Dsonar.host.url=http://host.docker.internal:9000 \
                                     -Dsonar.token=$SONAR_TOKEN || true
-
-                                echo "✅ Analyse SonarQube terminée"
-                                echo "📊 Résultats : http://localhost:9000/dashboard?id=filezen"
+                                echo "✅ SonarQube : http://localhost:9000/dashboard?id=filezen"
                             '''
                         }
                     } else {
-                        echo '⚠️ SonarQube non accessible — analyse ignorée (démarrer: docker run -d -p 9000:9000 sonarqube:community)'
+                        echo '⚠️ SonarQube non accessible — stage ignoré'
                     }
                 }
             }
         }
 
-        // ─── STAGE 12 : Build Docker + Push DockerHub ────────────────────────
+        // ─── STAGE 13 : Build & Push Docker → DockerHub (artefact final CI) ──
         stage('🐳 Build & Push Docker') {
-            when { branch 'main' }
             steps {
                 script {
-                    // Essayer Docker local, puis Docker Desktop via TCP
                     def dockerLocal = sh(script: 'docker --version 2>/dev/null', returnStatus: true) == 0
                     def dockerTCP   = sh(script: 'DOCKER_HOST=tcp://host.docker.internal:2375 docker --version 2>/dev/null', returnStatus: true) == 0
-                    def dockerHost  = dockerLocal ? '' : (dockerTCP ? 'DOCKER_HOST=tcp://host.docker.internal:2375 ' : '')
+                    def dockerPrefix = dockerLocal ? '' : (dockerTCP ? 'DOCKER_HOST=tcp://host.docker.internal:2375 ' : '')
                     def dockerOk    = dockerLocal || dockerTCP
 
                     if (dockerOk) {
@@ -540,83 +450,68 @@ console.log('k6-report.html generated');
                         )]) {
                             sh """
                                 export PATH=\$HOME/bin:\$PATH
-                                SHORT_SHA=\${GIT_COMMIT:0:8}
-                                DOCKER="${dockerHost}docker"
+                                DOCKER="${dockerPrefix}docker"
+                                SHA=\${GIT_COMMIT:-latest}
+                                SHORT_SHA=\${SHA:0:8}
 
                                 echo "🐳 Login DockerHub..."
                                 echo \$DOCKER_PASS | \$DOCKER login -u \$DOCKER_USER --password-stdin
 
                                 echo "🏗️ Build image Backend..."
-                                \$DOCKER build -t \$DOCKER_USER/filezen-backend:\$SHORT_SHA \
-                                              -t \$DOCKER_USER/filezen-backend:latest .
+                                \$DOCKER build \
+                                    -t \$DOCKER_USER/filezen-backend:\$SHORT_SHA \
+                                    -t \$DOCKER_USER/filezen-backend:latest \
+                                    --label "build=\${BUILD_NUMBER}" \
+                                    --label "commit=\$SHORT_SHA" \
+                                    .
 
                                 echo "📤 Push vers DockerHub..."
                                 \$DOCKER push \$DOCKER_USER/filezen-backend:\$SHORT_SHA
                                 \$DOCKER push \$DOCKER_USER/filezen-backend:latest
 
                                 echo "✅ Image publiée : \$DOCKER_USER/filezen-backend:\$SHORT_SHA"
+                                echo "🔗 https://hub.docker.com/r/\$DOCKER_USER/filezen-backend"
                             """
                         }
                     } else {
-                        echo '⚠️ Docker non disponible — activer Docker Desktop TCP (Settings > General > port 2375)'
+                        echo '⚠️ Docker non disponible — activer Docker Desktop TCP (Settings → General → port 2375)'
                     }
                 }
             }
         }
 
-        // ─── STAGE 12 : Deploy Staging (automatique sur main) ────────────────
-        stage('🚀 Deploy Staging') {
-            when { branch 'main' }
-            steps {
-                sh '''
-                    echo "🚀 Déploiement automatique sur staging..."
-                    echo "   Version : ${GIT_COMMIT:0:8}"
-                    echo "   Build   : #${BUILD_NUMBER}"
-                    echo "✅ FileZen v${GIT_COMMIT:0:8} déployé sur staging"
-                    echo "🔗 http://staging.filezen.tn"
-                '''
-                // Réel : docker-compose -f docker-compose.staging.yml up -d
-                // Ou  : kubectl set image deployment/backend backend=filezen-backend:${SHA}
-            }
-        }
-
-        // ─── STAGE 13 : Deploy Production (100% automatique — Continuous Deployment) ──
-        // Tous les tests passent → déploiement prod IMMÉDIAT, sans intervention humaine.
-        stage('🏆 Deploy Production') {
-            when { branch 'main' }
-            steps {
-                sh '''
-                    echo "🏆 Déploiement en PRODUCTION..."
-                    echo "   Version : ${GIT_COMMIT:0:8}"
-                    echo "✅ FileZen déployé en production !"
-                    echo "🔗 http://filezen.tn"
-                '''
-                // Réel : docker-compose -f docker-compose.prod.yml up -d
-            }
-        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
     post {
         success {
             echo """
-╔══════════════════════════════════════════╗
-║  ✅  PIPELINE RÉUSSI — FileZen           ║
+╔══════════════════════════════════════════════╗
+║  ✅  PIPELINE CI RÉUSSI — FileZen            ║
 ║  Build #${env.BUILD_NUMBER} — ${currentBuild.durationString}
-╚══════════════════════════════════════════╝
+║  Image Docker prête pour le déploiement CD   ║
+╚══════════════════════════════════════════════╝
             """
         }
         failure {
             echo """
-╔══════════════════════════════════════════╗
-║  ❌  PIPELINE ÉCHOUÉ — FileZen           ║
+╔══════════════════════════════════════════════╗
+║  ❌  PIPELINE CI ÉCHOUÉ — FileZen            ║
 ║  Build #${env.BUILD_NUMBER} — Vérifier les logs
-╚══════════════════════════════════════════╝
+╚══════════════════════════════════════════════╝
             """
         }
         always {
-            echo '📊 Rapport Allure disponible dans Jenkins (onglet Rapport Allure FileZen)'
-            echo '⚡ Rapport k6 archivé dans les artifacts'
+            // Nettoyage PID au cas où un stage aurait crashé avant l'arrêt
+            sh '''
+                [ -f /tmp/filezen_backend.pid ]     && kill $(cat /tmp/filezen_backend.pid)     2>/dev/null || true
+                [ -f /tmp/filezen_frontend.pid ]    && kill $(cat /tmp/filezen_frontend.pid)    2>/dev/null || true
+                [ -f /tmp/filezen_backend_sec.pid ] && kill $(cat /tmp/filezen_backend_sec.pid) 2>/dev/null || true
+                [ -f /tmp/filezen_backend_k6.pid ]  && kill $(cat /tmp/filezen_backend_k6.pid)  2>/dev/null || true
+                true
+            '''
+            echo '📊 Rapport Allure : onglet "Rapport Allure FileZen"'
+            echo '⚡ Rapport k6     : onglet "Rapport k6 Performance"'
         }
     }
 }
