@@ -37,11 +37,15 @@ pipeline {
         // ── STAGE 2 : Vérification VM + Minikube ─────────────────────────────
         stage('🔌 Vérification VM') {
             steps {
-                sshagent(['vm-ssh-key']) {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'vm-ssh-key',
+                    keyFileVariable: 'SSH_KEY',
+                    usernameVariable: 'SSH_USER'
+                )]) {
                     sh """
                         echo "=== Test connexion SSH ==="
-                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                            echo "✅ VM connectée : \$(hostname)"
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                            echo "VM connectee : \$(hostname)"
                             echo "--- Minikube status ---"
                             minikube status
                             echo "--- Nodes Kubernetes ---"
@@ -55,19 +59,22 @@ pipeline {
         // ── STAGE 3 : Build image Docker dans Minikube ───────────────────────
         stage('🏗️ Build Image Docker') {
             steps {
-                sshagent(['vm-ssh-key']) {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'vm-ssh-key',
+                    keyFileVariable: 'SSH_KEY',
+                    usernameVariable: 'SSH_USER'
+                )]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                            echo "=== Mise à jour du code ==="
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                            echo "=== Mise a jour du code ==="
                             cd ${APP_DIR} && git pull origin main
 
                             echo "=== Build image dans Minikube Docker ==="
                             eval \$(minikube docker-env)
                             docker build -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                                         -t ${IMAGE_NAME}:latest \
-                                         . 2>&1
+                                         -t ${IMAGE_NAME}:latest .
 
-                            echo "✅ Image construite : ${IMAGE_NAME}:${IMAGE_TAG}"
+                            echo "Image construite : ${IMAGE_NAME}:${IMAGE_TAG}"
                             docker images | grep ${IMAGE_NAME}
                         '
                     """
@@ -78,9 +85,13 @@ pipeline {
         // ── STAGE 4 : Déploiement Kubernetes ─────────────────────────────────
         stage('🚀 Déploiement Kubernetes') {
             steps {
-                sshagent(['vm-ssh-key']) {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'vm-ssh-key',
+                    keyFileVariable: 'SSH_KEY',
+                    usernameVariable: 'SSH_USER'
+                )]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
                             cd ${APP_DIR}
 
                             echo "=== Application des manifests K8s ==="
@@ -89,11 +100,11 @@ pipeline {
                             kubectl apply -f k8s/mongodb.yaml
                             kubectl apply -f k8s/backend.yaml
 
-                            echo "=== Mise à jour de l image vers ${IMAGE_TAG} ==="
+                            echo "=== Mise a jour image vers ${IMAGE_TAG} ==="
                             kubectl set image deployment/filezen-backend \
                                 filezen-backend=${IMAGE_NAME}:${IMAGE_TAG}
 
-                            echo "✅ Manifests appliqués"
+                            echo "Manifests appliques"
                         '
                     """
                 }
@@ -103,23 +114,23 @@ pipeline {
         // ── STAGE 5 : Vérification du rollout ────────────────────────────────
         stage('✅ Vérification Déploiement') {
             steps {
-                sshagent(['vm-ssh-key']) {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'vm-ssh-key',
+                    keyFileVariable: 'SSH_KEY',
+                    usernameVariable: 'SSH_USER'
+                )]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
                             echo "=== Attente du rollout (max 2 min) ==="
-                            kubectl rollout status deployment/filezen-backend \
-                                --timeout=120s
+                            kubectl rollout status deployment/filezen-backend --timeout=120s
 
-                            echo ""
-                            echo "=== État des Pods ==="
+                            echo "=== Etat des Pods ==="
                             kubectl get pods -o wide
 
-                            echo ""
                             echo "=== Services ==="
                             kubectl get services
 
-                            echo ""
-                            echo "=== URL accès backend ==="
+                            echo "=== URL acces backend ==="
                             echo "http://\$(minikube ip):30500/api/test"
                         '
                     """
@@ -131,21 +142,18 @@ pipeline {
     // ── Post actions ──────────────────────────────────────────────────────────
     post {
         success {
-            echo """
-╔══════════════════════════════════════════════╗
-║  🎉 Déploiement FileZen réussi !             ║
-║  Build : #${BUILD_NUMBER}                    ║
-║  Image : ${IMAGE_NAME}:${IMAGE_TAG}          ║
-║  URL   : http://192.168.12.161:30500         ║
-╚══════════════════════════════════════════════╝
-"""
+            echo "Deploiement FileZen reussi ! Build #${BUILD_NUMBER} | http://192.168.12.161:30500"
         }
         failure {
-            echo "❌ Échec du déploiement — vérifier les logs ci-dessus"
-            sshagent(['vm-ssh-key']) {
+            echo "Echec du deploiement — vérifier les logs ci-dessus"
+            withCredentials([sshUserPrivateKey(
+                credentialsId: 'vm-ssh-key',
+                keyFileVariable: 'SSH_KEY',
+                usernameVariable: 'SSH_USER'
+            )]) {
                 sh """
-                    ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} \
-                        'kubectl describe pods | tail -40' || true
+                    ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} \
+                        'kubectl get pods && kubectl describe pods | tail -30' || true
                 """
             }
         }
