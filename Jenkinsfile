@@ -247,11 +247,10 @@ pipeline {
                     steps {
                         dir(TESTS_FONCT_DIR) {
                             sh '''
-                                # Un seul browser (Chrome) — comme les tests manuels
-                                # Firefox + Mobile désactivés en CI pour éviter les doublons dans Allure
-                                npx playwright test --project="UI Chrome" \
-                                    --reporter=allure-playwright,list \
-                                    2>&1 | head -200 || true
+                                # CI=true active les timeouts étendus + flags --no-sandbox
+                                # Un seul browser Chrome (comme les tests manuels)
+                                CI=true npx playwright test --project="UI Chrome" \
+                                    --reporter=allure-playwright,list || true
                             '''
                         }
                     }
