@@ -448,7 +448,7 @@ console.log('k6-report.html generated');
                             groqKeyExists = true
                             sh """
                                 echo "🤖 Analyse IA (Groq - llama-3.1-8b-instant)..."
-                                node scripts/ai-analysis.js \
+                                node Scripts/ai-analysis.js \
                                     ${TESTS_FONCT_DIR}/allure-results \
                                     ${TESTS_NFONCT_DIR}/k6-smoke-summary.json \
                                     ${TESTS_FONCT_DIR}/ai-report.html || true
@@ -458,7 +458,7 @@ console.log('k6-report.html generated');
                         // Clé absente → générer rapport sans IA
                         echo "⚠️ Clé Groq non configurée — rapport IA sans analyse (ajouter credential 'groq-api-key')"
                         sh """
-                            node scripts/ai-analysis.js \
+                            node Scripts/ai-analysis.js \
                                 ${TESTS_FONCT_DIR}/allure-results \
                                 ${TESTS_NFONCT_DIR}/k6-smoke-summary.json \
                                 ${TESTS_FONCT_DIR}/ai-report.html || true
