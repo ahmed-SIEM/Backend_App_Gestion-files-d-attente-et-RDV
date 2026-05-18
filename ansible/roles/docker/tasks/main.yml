@@ -1,0 +1,40 @@
+---
+# Rôle docker — Installation et configuration de Docker
+
+- name: Vérifier si Docker est déjà installé
+  command: docker --version
+  register: docker_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: Télécharger le script d'installation Docker
+  get_url:
+    url: https://get.docker.com
+    dest: /tmp/install-docker.sh
+    mode: '0755'
+  when: docker_check.rc != 0
+
+- name: Installer Docker
+  command: sh /tmp/install-docker.sh
+  when: docker_check.rc != 0
+
+- name: Ajouter l'utilisateur au groupe docker
+  user:
+    name: "{{ app_user }}"
+    groups: docker
+    append: yes
+
+- name: Démarrer et activer Docker
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Vérification Docker
+  command: docker --version
+  register: docker_version
+  changed_when: false
+
+- name: Afficher version Docker
+  debug:
+    msg: "Docker installé : {{ docker_version.stdout }}"

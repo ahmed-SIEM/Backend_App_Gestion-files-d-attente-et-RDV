@@ -1,0 +1,46 @@
+---
+# Rôle common — Paquets système de base
+
+- name: Mise à jour des paquets apt
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Installation des paquets essentiels
+  apt:
+    name:
+      - curl
+      - wget
+      - git
+      - apt-transport-https
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - python3
+      - python3-pip
+      - openssh-server
+      - ufw
+    state: present
+
+- name: Démarrage et activation SSH
+  systemd:
+    name: ssh
+    state: started
+    enabled: yes
+
+- name: Autoriser SSH dans le firewall
+  ufw:
+    rule: allow
+    name: OpenSSH
+
+- name: Autoriser port 30500 (NodePort backend)
+  ufw:
+    rule: allow
+    port: '30500'
+    proto: tcp
+
+- name: Activer le firewall
+  ufw:
+    state: enabled
+    policy: deny
+    direction: incoming

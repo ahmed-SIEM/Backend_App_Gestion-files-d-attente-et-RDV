@@ -1,0 +1,21 @@
+---
+# FileZen — Playbook de configuration de la VM de déploiement
+# Configure automatiquement : Docker, kubectl, Minikube, repo FileZen
+
+- name: Configuration VM FileZen
+  hosts: filezen_vm
+  become: yes
+  gather_facts: yes
+
+  vars:
+    app_user: pfe
+    app_dir: /home/pfe/filezen
+    repo_url: https://github.com/ahmed-SIEM/Backend_App_Gestion-files-d-attente-et-RDV.git
+    minikube_version: latest
+    kubectl_version: stable
+
+  roles:
+    - common
+    - docker
+    - kubernetes
+    - filezen

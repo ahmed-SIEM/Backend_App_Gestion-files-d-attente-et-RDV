@@ -1,0 +1,52 @@
+---
+# Rôle kubernetes — Installation de kubectl et Minikube
+
+- name: Récupérer la version stable de kubectl
+  uri:
+    url: https://dl.k8s.io/release/stable.txt
+    return_content: yes
+  register: kubectl_stable_version
+
+- name: Vérifier si kubectl est déjà installé
+  command: kubectl version --client --short
+  register: kubectl_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: Télécharger kubectl
+  get_url:
+    url: "https://dl.k8s.io/release/{{ kubectl_stable_version.content | trim }}/bin/linux/amd64/kubectl"
+    dest: /usr/local/bin/kubectl
+    mode: '0755'
+  when: kubectl_check.rc != 0
+
+- name: Vérifier si Minikube est déjà installé
+  command: minikube version
+  register: minikube_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: Télécharger Minikube
+  get_url:
+    url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+    dest: /usr/local/bin/minikube
+    mode: '0755'
+  when: minikube_check.rc != 0
+
+- name: Démarrer Minikube (en tant qu'utilisateur pfe)
+  become_user: "{{ app_user }}"
+  command: minikube start --driver=docker --cpus=2 --memory=3000
+  register: minikube_start
+  ignore_errors: yes
+  changed_when: "'Done' in minikube_start.stdout or 'minikube' in minikube_start.stdout"
+
+- name: Vérifier status Minikube
+  become_user: "{{ app_user }}"
+  command: minikube status
+  register: minikube_status
+  changed_when: false
+  ignore_errors: yes
+
+- name: Afficher status Minikube
+  debug:
+    msg: "{{ minikube_status.stdout }}"

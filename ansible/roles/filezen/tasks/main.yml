@@ -1,0 +1,50 @@
+---
+# Rôle filezen — Clonage et configuration du repo FileZen
+
+- name: Vérifier si le repo existe déjà
+  stat:
+    path: "{{ app_dir }}"
+  register: repo_stat
+
+- name: Cloner le repo FileZen
+  become_user: "{{ app_user }}"
+  git:
+    repo: "{{ repo_url }}"
+    dest: "{{ app_dir }}"
+    branch: main
+    force: no
+  when: not repo_stat.stat.exists
+
+- name: Mettre à jour le repo si déjà cloné
+  become_user: "{{ app_user }}"
+  git:
+    repo: "{{ repo_url }}"
+    dest: "{{ app_dir }}"
+    branch: main
+    update: yes
+  when: repo_stat.stat.exists
+
+- name: Vérifier la structure du projet
+  become_user: "{{ app_user }}"
+  command: ls "{{ app_dir }}"
+  register: project_structure
+  changed_when: false
+
+- name: Afficher la structure
+  debug:
+    msg: "Fichiers FileZen : {{ project_structure.stdout_lines }}"
+
+- name: Vérification finale — tous les composants
+  become_user: "{{ app_user }}"
+  shell: |
+    echo "=== Docker ===" && docker --version
+    echo "=== kubectl ===" && kubectl version --client --short 2>/dev/null || kubectl version --client
+    echo "=== Minikube ===" && minikube version
+    echo "=== Nodes K8s ===" && kubectl get nodes
+  register: final_check
+  changed_when: false
+  ignore_errors: yes
+
+- name: Résumé de la configuration
+  debug:
+    msg: "{{ final_check.stdout_lines }}"
