@@ -441,9 +441,23 @@ console.log('k6-report.html generated');
         stage('🤖 Analyse IA') {
             steps {
                 script {
-                    withCredentials([string(credentialsId: 'groq-api-key', variable: 'GROQ_API_KEY')]) {
+                    // Vérifier si le credential groq-api-key existe avant d'appeler withCredentials
+                    def groqKeyExists = false
+                    try {
+                        withCredentials([string(credentialsId: 'groq-api-key', variable: 'GROQ_API_KEY')]) {
+                            groqKeyExists = true
+                            sh """
+                                echo "🤖 Analyse IA (Groq - llama-3.1-8b-instant)..."
+                                node scripts/ai-analysis.js \
+                                    ${TESTS_FONCT_DIR}/allure-results \
+                                    ${TESTS_NFONCT_DIR}/k6-smoke-summary.json \
+                                    ${TESTS_FONCT_DIR}/ai-report.html || true
+                            """
+                        }
+                    } catch(e) {
+                        // Clé absente → générer rapport sans IA
+                        echo "⚠️ Clé Groq non configurée — rapport IA sans analyse (ajouter credential 'groq-api-key')"
                         sh """
-                            echo "🤖 Analyse IA (Groq - llama-3.1-8b-instant)..."
                             node scripts/ai-analysis.js \
                                 ${TESTS_FONCT_DIR}/allure-results \
                                 ${TESTS_NFONCT_DIR}/k6-smoke-summary.json \
