@@ -159,32 +159,44 @@ pipeline {
             }
         }
 
-        // ─── STAGE 5 : Démarrer Backend + MongoDB ────────────────────────────
+        // ─── STAGE 5 : Démarrer MongoDB + Backend ────────────────────────────
         stage('🚀 Démarrer Backend') {
             steps {
+                sh '''
+                    export PATH=$HOME/bin:$PATH
+                    mkdir -p $HOME/bin $HOME/.cache/mongod-ci /tmp/mongo-data
+
+                    # ── Installer mongod si absent (binaire Debian 12 compatible) ──
+                    if ! command -v mongod >/dev/null 2>&1 && [ ! -f $HOME/bin/mongod ]; then
+                        echo "📥 Téléchargement MongoDB 7.0..."
+                        curl -sL https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian12-7.0.8.tgz \
+                            -o /tmp/mongo.tgz
+                        tar xzf /tmp/mongo.tgz -C /tmp/
+                        cp /tmp/mongodb-linux-x86_64-debian12-7.0.8/bin/mongod $HOME/bin/mongod
+                        chmod +x $HOME/bin/mongod
+                        rm -rf /tmp/mongo.tgz /tmp/mongodb-linux*
+                        echo "✅ mongod installé : $($HOME/bin/mongod --version | head -1)"
+                    fi
+
+                    # ── Démarrer MongoDB ──────────────────────────────────────────
+                    echo "🍃 Démarrage MongoDB..."
+                    $HOME/bin/mongod \
+                        --port 27017 \
+                        --dbpath /tmp/mongo-data \
+                        --bind_ip 127.0.0.1 \
+                        --fork \
+                        --logpath /tmp/mongod.log \
+                        --quiet \
+                    && echo "✅ MongoDB démarré sur port 27017" \
+                    || echo "⚠️ MongoDB déjà en cours ou erreur — on continue"
+
+                    sleep 3
+                '''
                 dir(BACKEND_DIR) {
                     sh '''
-                        # Détecter Docker (local ou via Docker Desktop TCP)
-                        DOCKER_CMD=""
-                        if command -v docker >/dev/null 2>&1; then
-                            DOCKER_CMD="docker"
-                        elif DOCKER_HOST=tcp://host.docker.internal:2375 docker --version >/dev/null 2>&1; then
-                            DOCKER_CMD="DOCKER_HOST=tcp://host.docker.internal:2375 docker"
-                        fi
+                        export PATH=$HOME/bin:$PATH
 
-                        # Démarrer MongoDB si Docker disponible
-                        if [ -n "$DOCKER_CMD" ]; then
-                            echo "🐳 Démarrage MongoDB via Docker..."
-                            $DOCKER_CMD rm -f mongo-ci 2>/dev/null || true
-                            $DOCKER_CMD run -d --rm --name mongo-ci -p 27017:27017 mongo:7 \
-                                && echo "✅ MongoDB démarré" \
-                                || echo "⚠️ MongoDB Docker impossible"
-                            sleep 5
-                        else
-                            echo "⚠️ Docker non disponible — backend sans MongoDB"
-                        fi
-
-                        # Démarrer le backend
+                        # ── Démarrer le backend avec MongoDB ─────────────────────
                         MONGODB_URI=mongodb://localhost:27017/filezen_test \
                         NODE_ENV=test node src/server.js &
                         echo $! > /tmp/filezen_backend.pid
@@ -384,14 +396,12 @@ console.log('k6-report.html generated');
         stage('🛑 Arrêter les serveurs') {
             steps {
                 sh '''
+                    export PATH=$HOME/bin:$PATH
                     [ -f /tmp/filezen_backend.pid ]  && kill $(cat /tmp/filezen_backend.pid)  2>/dev/null && rm /tmp/filezen_backend.pid  && echo "✅ Backend arrêté"  || true
                     [ -f /tmp/filezen_frontend.pid ] && kill $(cat /tmp/filezen_frontend.pid) 2>/dev/null && rm /tmp/filezen_frontend.pid && echo "✅ Frontend arrêté" || true
-
-                    # Arrêter MongoDB Docker si lancé
-                    DOCKER_CMD=""
-                    command -v docker >/dev/null 2>&1 && DOCKER_CMD="docker"
-                    [ -z "$DOCKER_CMD" ] && DOCKER_HOST=tcp://host.docker.internal:2375 docker --version >/dev/null 2>&1 && DOCKER_CMD="DOCKER_HOST=tcp://host.docker.internal:2375 docker"
-                    [ -n "$DOCKER_CMD" ] && $DOCKER_CMD rm -f mongo-ci 2>/dev/null || true
+                    # Arrêter MongoDB (via mongod --shutdown)
+                    $HOME/bin/mongod --shutdown --dbpath /tmp/mongo-data 2>/dev/null || \
+                        pkill -f "mongod.*27017" 2>/dev/null || true
                     echo "✅ Serveurs arrêtés"
                 '''
             }
