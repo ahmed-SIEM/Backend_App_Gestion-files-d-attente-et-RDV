@@ -1,11 +1,6 @@
 /**
  * FileZen — Pipeline CD (Continuous Deployment)
  * Déploiement automatique sur Kubernetes (Minikube / VM Ubuntu)
- *
- * Prérequis :
- *   - Credential Jenkins : vm-ssh-key (SSH Username with private key, user=pfe)
- *   - VM Ubuntu à 192.168.12.161 avec Minikube démarré
- *   - Repo cloné sur la VM dans ~/filezen
  */
 
 pipeline {
@@ -17,6 +12,7 @@ pipeline {
         APP_DIR    = '/home/pfe/filezen'
         IMAGE_NAME = 'filezen-backend'
         IMAGE_TAG  = "build-${BUILD_NUMBER}"
+        SSH_KEY    = '/var/jenkins_home/.ssh/filezen_vm'
     }
 
     options {
@@ -30,132 +26,102 @@ pipeline {
         stage('🔄 Checkout') {
             steps {
                 checkout scm
-                echo "Branch: ${env.GIT_BRANCH ?: 'main'} | Build: #${BUILD_NUMBER}"
+                echo "Build: #${BUILD_NUMBER} | Branch: ${env.GIT_BRANCH ?: 'main'}"
             }
         }
 
         // ── STAGE 2 : Vérification VM + Minikube ─────────────────────────────
         stage('🔌 Vérification VM') {
             steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: 'vm-ssh-key',
-                    keyFileVariable: 'SSH_KEY',
-                    usernameVariable: 'SSH_USER'
-                )]) {
-                    sh """
-                        echo "=== Test connexion SSH ==="
-                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                            echo "VM connectee : \$(hostname)"
-                            echo "--- Minikube status ---"
-                            minikube status
-                            echo "--- Nodes Kubernetes ---"
-                            kubectl get nodes
-                        '
-                    """
-                }
+                sh """
+                    chmod 600 ${SSH_KEY}
+                    echo "=== Test connexion SSH ==="
+                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                        echo "VM connectee : \$(hostname)"
+                        echo "--- Minikube ---"
+                        minikube status
+                        echo "--- Nodes ---"
+                        kubectl get nodes
+                    '
+                """
             }
         }
 
         // ── STAGE 3 : Build image Docker dans Minikube ───────────────────────
         stage('🏗️ Build Image Docker') {
             steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: 'vm-ssh-key',
-                    keyFileVariable: 'SSH_KEY',
-                    usernameVariable: 'SSH_USER'
-                )]) {
-                    sh """
-                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                            echo "=== Mise a jour du code ==="
-                            cd ${APP_DIR} && git pull origin main
+                sh """
+                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                        echo "=== Mise a jour du code ==="
+                        cd ${APP_DIR} && git pull origin main
 
-                            echo "=== Build image dans Minikube Docker ==="
-                            eval \$(minikube docker-env)
-                            docker build -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                                         -t ${IMAGE_NAME}:latest .
+                        echo "=== Build image dans Minikube Docker ==="
+                        eval \$(minikube docker-env)
+                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                                     -t ${IMAGE_NAME}:latest .
 
-                            echo "Image construite : ${IMAGE_NAME}:${IMAGE_TAG}"
-                            docker images | grep ${IMAGE_NAME}
-                        '
-                    """
-                }
+                        echo "=== Image construite ==="
+                        docker images | grep ${IMAGE_NAME}
+                    '
+                """
             }
         }
 
         // ── STAGE 4 : Déploiement Kubernetes ─────────────────────────────────
         stage('🚀 Déploiement Kubernetes') {
             steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: 'vm-ssh-key',
-                    keyFileVariable: 'SSH_KEY',
-                    usernameVariable: 'SSH_USER'
-                )]) {
-                    sh """
-                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                            cd ${APP_DIR}
+                sh """
+                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                        cd ${APP_DIR}
 
-                            echo "=== Application des manifests K8s ==="
-                            kubectl apply -f k8s/configmap.yaml
-                            kubectl apply -f k8s/secret.yaml
-                            kubectl apply -f k8s/mongodb.yaml
-                            kubectl apply -f k8s/backend.yaml
+                        echo "=== Application des manifests K8s ==="
+                        kubectl apply -f k8s/configmap.yaml
+                        kubectl apply -f k8s/secret.yaml
+                        kubectl apply -f k8s/mongodb.yaml
+                        kubectl apply -f k8s/backend.yaml
 
-                            echo "=== Mise a jour image vers ${IMAGE_TAG} ==="
-                            kubectl set image deployment/filezen-backend \
-                                filezen-backend=${IMAGE_NAME}:${IMAGE_TAG}
-
-                            echo "Manifests appliques"
-                        '
-                    """
-                }
+                        echo "=== Mise a jour image : ${IMAGE_TAG} ==="
+                        kubectl set image deployment/filezen-backend \
+                            filezen-backend=${IMAGE_NAME}:${IMAGE_TAG}
+                    '
+                """
             }
         }
 
         // ── STAGE 5 : Vérification du rollout ────────────────────────────────
         stage('✅ Vérification Déploiement') {
             steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: 'vm-ssh-key',
-                    keyFileVariable: 'SSH_KEY',
-                    usernameVariable: 'SSH_USER'
-                )]) {
-                    sh """
-                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                            echo "=== Attente du rollout (max 2 min) ==="
-                            kubectl rollout status deployment/filezen-backend --timeout=120s
+                sh """
+                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                        echo "=== Rollout status (max 2 min) ==="
+                        kubectl rollout status deployment/filezen-backend --timeout=120s
 
-                            echo "=== Etat des Pods ==="
-                            kubectl get pods -o wide
+                        echo ""
+                        echo "=== Pods ==="
+                        kubectl get pods -o wide
 
-                            echo "=== Services ==="
-                            kubectl get services
+                        echo ""
+                        echo "=== Services ==="
+                        kubectl get services
 
-                            echo "=== URL acces backend ==="
-                            echo "http://\$(minikube ip):30500/api/test"
-                        '
-                    """
-                }
+                        echo ""
+                        echo "=== URL backend ==="
+                        echo "http://\$(minikube ip):30500/api/test"
+                    '
+                """
             }
         }
     }
 
-    // ── Post actions ──────────────────────────────────────────────────────────
     post {
         success {
-            echo "Deploiement FileZen reussi ! Build #${BUILD_NUMBER} | http://192.168.12.161:30500"
+            echo "Deploiement reussi ! Build #${BUILD_NUMBER} | http://192.168.12.161:30500"
         }
         failure {
-            echo "Echec du deploiement — vérifier les logs ci-dessus"
-            withCredentials([sshUserPrivateKey(
-                credentialsId: 'vm-ssh-key',
-                keyFileVariable: 'SSH_KEY',
-                usernameVariable: 'SSH_USER'
-            )]) {
-                sh """
-                    ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} \
-                        'kubectl get pods && kubectl describe pods | tail -30' || true
-                """
-            }
+            sh """
+                ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} \
+                    'kubectl get pods && kubectl describe pods | tail -20' || true
+            """
         }
     }
 }
