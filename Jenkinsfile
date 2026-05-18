@@ -412,14 +412,15 @@ console.log('k6-report.html generated');
             steps {
                 dir(TESTS_FONCT_DIR) {
                     sh '''
-                        echo "📊 Génération rapport Allure..."
-                        echo "   Résultats trouvés : $(ls allure-results/*.json 2>/dev/null | wc -l) fichiers"
+                        NB=$(ls allure-results/*.json 2>/dev/null | wc -l)
+                        echo "📊 Génération rapport Allure... ($NB résultats)"
 
-                        # Générer le rapport HTML final
-                        allure generate allure-results --clean -o allure-report || true
+                        # Utiliser npx allure (depuis node_modules du projet)
+                        # → pas de dépendance au binaire Jenkins qui peut être absent
+                        npx allure generate allure-results --clean -o allure-report
 
                         echo "✅ Rapport Allure généré"
-                        echo "   Tests dans le rapport : $(ls allure-report/data/test-cases/ 2>/dev/null | wc -l)"
+                        echo "   Tests : $(ls allure-report/data/test-cases/ 2>/dev/null | wc -l)"
                     '''
                 }
             }
