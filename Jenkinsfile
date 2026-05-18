@@ -441,9 +441,9 @@ console.log('k6-report.html generated');
         stage('🤖 Analyse IA') {
             steps {
                 script {
-                    withCredentials([string(credentialsId: 'anthropic-api-key', variable: 'ANTHROPIC_API_KEY')]) {
+                    withCredentials([string(credentialsId: 'groq-api-key', variable: 'GROQ_API_KEY')]) {
                         sh """
-                            echo "🤖 Analyse IA des résultats de tests..."
+                            echo "🤖 Analyse IA (Groq - llama-3.1-8b-instant)..."
                             node scripts/ai-analysis.js \
                                 ${TESTS_FONCT_DIR}/allure-results \
                                 ${TESTS_NFONCT_DIR}/k6-smoke-summary.json \
