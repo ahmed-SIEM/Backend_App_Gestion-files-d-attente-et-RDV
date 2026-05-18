@@ -82,6 +82,29 @@ pipeline {
                 sh """
                     ln -sf ${env.WORKSPACE} ${env.WORKSPACE}/Backend 2>/dev/null || true
                 """
+
+                // Préparer le dossier allure-results propre pour ce build
+                // On préserve l'historique (courbes de tendance) avant de nettoyer
+                dir(TESTS_FONCT_DIR) {
+                    sh '''
+                        # Sauvegarder l'historique avant nettoyage
+                        mkdir -p allure-results-history
+                        [ -d allure-report/history ] \
+                            && cp -r allure-report/history allure-results-history/ \
+                            || true
+
+                        # Nettoyer les résultats du build précédent
+                        rm -rf allure-results
+                        mkdir -p allure-results
+
+                        # Réinjecter l'historique pour les courbes de tendance
+                        [ -d allure-results-history/history ] \
+                            && cp -r allure-results-history/history allure-results/ \
+                            || true
+
+                        echo "✅ allure-results prêt (résultats précédents nettoyés)"
+                    '''
+                }
             }
         }
 
@@ -212,8 +235,11 @@ pipeline {
                     steps {
                         dir(TESTS_FONCT_DIR) {
                             sh '''
+                                # Un seul browser (Chrome) — comme les tests manuels
+                                # Firefox + Mobile désactivés en CI pour éviter les doublons dans Allure
                                 npx playwright test --project="UI Chrome" \
-                                    --reporter=allure-playwright,list || true
+                                    --reporter=allure-playwright,list \
+                                    2>&1 | head -200 || true
                             '''
                         }
                     }
@@ -376,9 +402,14 @@ console.log('k6-report.html generated');
             steps {
                 dir(TESTS_FONCT_DIR) {
                     sh '''
-                        node -e "const fs=require('fs');try{fs.cpSync('allure-report/history','allure-results/history',{recursive:true})}catch(e){}"
+                        echo "📊 Génération rapport Allure..."
+                        echo "   Résultats trouvés : $(ls allure-results/*.json 2>/dev/null | wc -l) fichiers"
+
+                        # Générer le rapport HTML final
                         allure generate allure-results --clean -o allure-report || true
+
                         echo "✅ Rapport Allure généré"
+                        echo "   Tests dans le rapport : $(ls allure-report/data/test-cases/ 2>/dev/null | wc -l)"
                     '''
                 }
             }
