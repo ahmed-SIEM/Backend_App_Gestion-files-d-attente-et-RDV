@@ -437,6 +437,35 @@ console.log('k6-report.html generated');
             }
         }
 
+        // ─── STAGE 11b : Analyse IA des résultats ────────────────────────────
+        stage('🤖 Analyse IA') {
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'anthropic-api-key', variable: 'ANTHROPIC_API_KEY')]) {
+                        sh """
+                            echo "🤖 Analyse IA des résultats de tests..."
+                            node scripts/ai-analysis.js \
+                                ${TESTS_FONCT_DIR}/allure-results \
+                                ${TESTS_NFONCT_DIR}/k6-smoke-summary.json \
+                                ${TESTS_FONCT_DIR}/ai-report.html || true
+                        """
+                    }
+                }
+            }
+            post {
+                always {
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: "${TESTS_FONCT_DIR}",
+                        reportFiles: 'ai-report.html',
+                        reportName: '🤖 Analyse IA FileZen'
+                    ])
+                }
+            }
+        }
+
         // ─── STAGE 12 : Analyse SonarQube ────────────────────────────────────
         stage('🔍 Analyse SonarQube') {
             steps {
