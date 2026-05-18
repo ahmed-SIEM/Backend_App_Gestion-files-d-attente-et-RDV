@@ -1,22 +1,26 @@
 /**
  * FileZen — Pipeline CD (Continuous Deployment)
- * Déploiement automatique sur Kubernetes (Minikube / VM Ubuntu)
+ * Déploiement automatique Backend + Frontend sur Kubernetes (Minikube / VM Ubuntu)
  */
 
 pipeline {
     agent any
 
     environment {
-        VM_HOST    = '192.168.12.161'
-        VM_USER    = 'pfe'
-        APP_DIR    = '/home/pfe/filezen'
-        IMAGE_NAME = 'filezen-backend'
-        IMAGE_TAG  = "build-${BUILD_NUMBER}"
-        SSH_KEY    = '/var/jenkins_home/.ssh/filezen_vm'
+        VM_HOST        = '192.168.12.161'
+        VM_USER        = 'pfe'
+        APP_DIR        = '/home/pfe/filezen'
+        FRONT_DIR      = '/home/pfe/filezen-frontend'
+        FRONT_REPO     = 'https://github.com/ahmed-SIEM/Frontend_App_Gestion-files-d-attente-et-RDV.git'
+        IMAGE_BACKEND  = 'filezen-backend'
+        IMAGE_FRONTEND = 'filezen-frontend'
+        IMAGE_TAG      = "build-${BUILD_NUMBER}"
+        SSH_KEY        = '/var/jenkins_home/.ssh/filezen_vm'
+        BACKEND_URL    = 'http://192.168.12.161:30500'
     }
 
     options {
-        timeout(time: 20, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
@@ -35,33 +39,46 @@ pipeline {
             steps {
                 sh """
                     chmod 600 ${SSH_KEY}
-                    echo "=== Test connexion SSH ==="
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                        echo "VM connectee : \$(hostname)"
-                        echo "--- Minikube ---"
+                        echo "VM : \$(hostname)"
                         minikube status
-                        echo "--- Nodes ---"
                         kubectl get nodes
                     '
                 """
             }
         }
 
-        // ── STAGE 3 : Build image Docker dans Minikube ───────────────────────
-        stage('🏗️ Build Image Docker') {
+        // ── STAGE 3 : Build images Backend + Frontend ─────────────────────────
+        stage('🏗️ Build Images Docker') {
             steps {
                 sh """
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                        echo "=== Mise a jour du code ==="
+                        eval \$(minikube docker-env)
+
+                        echo "=== Backend : git pull ==="
                         cd ${APP_DIR} && git pull origin main
 
-                        echo "=== Build image dans Minikube Docker ==="
-                        eval \$(minikube docker-env)
-                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                                     -t ${IMAGE_NAME}:latest .
+                        echo "=== Backend : docker build ==="
+                        docker build -t ${IMAGE_BACKEND}:${IMAGE_TAG} \
+                                     -t ${IMAGE_BACKEND}:latest .
 
-                        echo "=== Image construite ==="
-                        docker images | grep ${IMAGE_NAME}
+                        echo "=== Frontend : clone ou pull ==="
+                        if [ -d "${FRONT_DIR}" ]; then
+                            cd ${FRONT_DIR} && git pull origin main
+                        else
+                            git clone ${FRONT_REPO} ${FRONT_DIR}
+                        fi
+
+                        echo "=== Frontend : docker build avec URL backend ==="
+                        cd ${FRONT_DIR}
+                        docker build \
+                            --build-arg VITE_API_URL=${BACKEND_URL}/api \
+                            --build-arg VITE_SOCKET_URL=${BACKEND_URL} \
+                            -t ${IMAGE_FRONTEND}:${IMAGE_TAG} \
+                            -t ${IMAGE_FRONTEND}:latest .
+
+                        echo "=== Images disponibles ==="
+                        docker images | grep filezen
                     '
                 """
             }
@@ -79,10 +96,15 @@ pipeline {
                         kubectl apply -f k8s/secret.yaml
                         kubectl apply -f k8s/mongodb.yaml
                         kubectl apply -f k8s/backend.yaml
+                        kubectl apply -f k8s/frontend.yaml
 
-                        echo "=== Mise a jour image : ${IMAGE_TAG} ==="
+                        echo "=== Mise a jour images ==="
                         kubectl set image deployment/filezen-backend \
-                            filezen-backend=${IMAGE_NAME}:${IMAGE_TAG}
+                            filezen-backend=${IMAGE_BACKEND}:${IMAGE_TAG}
+                        kubectl set image deployment/filezen-frontend \
+                            filezen-frontend=${IMAGE_FRONTEND}:${IMAGE_TAG}
+
+                        echo "=== Manifests appliques ==="
                     '
                 """
             }
@@ -93,8 +115,11 @@ pipeline {
             steps {
                 sh """
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                        echo "=== Rollout status (max 2 min) ==="
+                        echo "=== Rollout backend ==="
                         kubectl rollout status deployment/filezen-backend --timeout=120s
+
+                        echo "=== Rollout frontend ==="
+                        kubectl rollout status deployment/filezen-frontend --timeout=120s
 
                         echo ""
                         echo "=== Pods ==="
@@ -105,8 +130,9 @@ pipeline {
                         kubectl get services
 
                         echo ""
-                        echo "=== URL backend ==="
-                        echo "http://\$(minikube ip):30500/api/test"
+                        echo "=== URLs ==="
+                        echo "Frontend : http://\$(minikube ip):30173"
+                        echo "Backend  : http://\$(minikube ip):30500/api/test"
                     '
                 """
             }
@@ -115,7 +141,7 @@ pipeline {
 
     post {
         success {
-            echo "Deploiement reussi ! Build #${BUILD_NUMBER} | http://192.168.12.161:30500"
+            echo "Deploiement complet ! Frontend: http://192.168.12.161:30173 | Backend: http://192.168.12.161:30500"
         }
         failure {
             sh """

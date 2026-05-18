@@ -1,0 +1,49 @@
+## ── Deployment Frontend React ────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: filezen-frontend
+  namespace: default
+  labels:
+    app: filezen-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: filezen-frontend
+  template:
+    metadata:
+      labels:
+        app: filezen-frontend
+    spec:
+      containers:
+        - name: filezen-frontend
+          image: filezen-frontend:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+
+---
+## ── Service Frontend (NodePort) ──────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: filezen-frontend-service
+  namespace: default
+  labels:
+    app: filezen-frontend
+spec:
+  type: NodePort
+  selector:
+    app: filezen-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30173
