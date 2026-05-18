@@ -1,0 +1,153 @@
+/**
+ * FileZen — Pipeline CD (Continuous Deployment)
+ * Déploiement automatique sur Kubernetes (Minikube / VM Ubuntu)
+ *
+ * Prérequis :
+ *   - Credential Jenkins : vm-ssh-key (SSH Username with private key, user=pfe)
+ *   - VM Ubuntu à 192.168.12.161 avec Minikube démarré
+ *   - Repo cloné sur la VM dans ~/filezen
+ */
+
+pipeline {
+    agent any
+
+    environment {
+        VM_HOST    = '192.168.12.161'
+        VM_USER    = 'pfe'
+        APP_DIR    = '/home/pfe/filezen'
+        IMAGE_NAME = 'filezen-backend'
+        IMAGE_TAG  = "build-${BUILD_NUMBER}"
+    }
+
+    options {
+        timeout(time: 20, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+
+        // ── STAGE 1 : Checkout ────────────────────────────────────────────────
+        stage('🔄 Checkout') {
+            steps {
+                checkout scm
+                echo "Branch: ${env.GIT_BRANCH ?: 'main'} | Build: #${BUILD_NUMBER}"
+            }
+        }
+
+        // ── STAGE 2 : Vérification VM + Minikube ─────────────────────────────
+        stage('🔌 Vérification VM') {
+            steps {
+                sshagent(['vm-ssh-key']) {
+                    sh """
+                        echo "=== Test connexion SSH ==="
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                            echo "✅ VM connectée : \$(hostname)"
+                            echo "--- Minikube status ---"
+                            minikube status
+                            echo "--- Nodes Kubernetes ---"
+                            kubectl get nodes
+                        '
+                    """
+                }
+            }
+        }
+
+        // ── STAGE 3 : Build image Docker dans Minikube ───────────────────────
+        stage('🏗️ Build Image Docker') {
+            steps {
+                sshagent(['vm-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                            echo "=== Mise à jour du code ==="
+                            cd ${APP_DIR} && git pull origin main
+
+                            echo "=== Build image dans Minikube Docker ==="
+                            eval \$(minikube docker-env)
+                            docker build -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                                         -t ${IMAGE_NAME}:latest \
+                                         . 2>&1
+
+                            echo "✅ Image construite : ${IMAGE_NAME}:${IMAGE_TAG}"
+                            docker images | grep ${IMAGE_NAME}
+                        '
+                    """
+                }
+            }
+        }
+
+        // ── STAGE 4 : Déploiement Kubernetes ─────────────────────────────────
+        stage('🚀 Déploiement Kubernetes') {
+            steps {
+                sshagent(['vm-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                            cd ${APP_DIR}
+
+                            echo "=== Application des manifests K8s ==="
+                            kubectl apply -f k8s/configmap.yaml
+                            kubectl apply -f k8s/secret.yaml
+                            kubectl apply -f k8s/mongodb.yaml
+                            kubectl apply -f k8s/backend.yaml
+
+                            echo "=== Mise à jour de l image vers ${IMAGE_TAG} ==="
+                            kubectl set image deployment/filezen-backend \
+                                filezen-backend=${IMAGE_NAME}:${IMAGE_TAG}
+
+                            echo "✅ Manifests appliqués"
+                        '
+                    """
+                }
+            }
+        }
+
+        // ── STAGE 5 : Vérification du rollout ────────────────────────────────
+        stage('✅ Vérification Déploiement') {
+            steps {
+                sshagent(['vm-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                            echo "=== Attente du rollout (max 2 min) ==="
+                            kubectl rollout status deployment/filezen-backend \
+                                --timeout=120s
+
+                            echo ""
+                            echo "=== État des Pods ==="
+                            kubectl get pods -o wide
+
+                            echo ""
+                            echo "=== Services ==="
+                            kubectl get services
+
+                            echo ""
+                            echo "=== URL accès backend ==="
+                            echo "http://\$(minikube ip):30500/api/test"
+                        '
+                    """
+                }
+            }
+        }
+    }
+
+    // ── Post actions ──────────────────────────────────────────────────────────
+    post {
+        success {
+            echo """
+╔══════════════════════════════════════════════╗
+║  🎉 Déploiement FileZen réussi !             ║
+║  Build : #${BUILD_NUMBER}                    ║
+║  Image : ${IMAGE_NAME}:${IMAGE_TAG}          ║
+║  URL   : http://192.168.12.161:30500         ║
+╚══════════════════════════════════════════════╝
+"""
+        }
+        failure {
+            echo "❌ Échec du déploiement — vérifier les logs ci-dessus"
+            sshagent(['vm-ssh-key']) {
+                sh """
+                    ssh -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} \
+                        'kubectl describe pods | tail -40' || true
+                """
+            }
+        }
+    }
+}

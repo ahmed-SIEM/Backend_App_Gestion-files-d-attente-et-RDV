@@ -1,0 +1,73 @@
+## ── Deployment Backend Node.js ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: filezen-backend
+  namespace: default
+  labels:
+    app: filezen-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: filezen-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: filezen-backend
+    spec:
+      containers:
+        - name: filezen-backend
+          image: filezen-backend:latest
+          imagePullPolicy: Never        # image construite dans minikube
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: filezen-config
+            - secretRef:
+                name: filezen-secret
+          livenessProbe:
+            httpGet:
+              path: /api/test
+              port: 5000
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/test
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+## ── Service Backend (NodePort accessible de l'extérieur) ─────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: filezen-service
+  namespace: default
+  labels:
+    app: filezen-backend
+spec:
+  type: NodePort
+  selector:
+    app: filezen-backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+      nodePort: 30500
