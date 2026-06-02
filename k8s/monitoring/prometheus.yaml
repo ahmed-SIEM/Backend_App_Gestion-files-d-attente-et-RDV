@@ -17,16 +17,10 @@ data:
         static_configs:
           - targets: ['localhost:9090']
 
-      # Node Exporter — métriques système VM (CPU, RAM, disque)
+      # Node Exporter — IP directe du nœud Minikube (hostNetwork=true)
       - job_name: 'node-exporter'
         static_configs:
-          - targets: ['node-exporter-service.monitoring.svc.cluster.local:9100']
-
-      # Backend FileZen
-      - job_name: 'filezen-backend'
-        static_configs:
-          - targets: ['filezen-backend-service.default.svc.cluster.local:5000']
-        metrics_path: '/api/metrics'
+          - targets: ['192.168.49.2:9100']
 
       # Kubernetes API Server
       - job_name: 'kubernetes-apiservers'
@@ -42,7 +36,7 @@ data:
             action: keep
             regex: default;kubernetes;https
 
-      # Kubernetes Nodes (kubelet)
+      # Kubernetes Nodes — via API proxy (évite le 403 Forbidden)
       - job_name: 'kubernetes-nodes'
         scheme: https
         tls_config:
@@ -54,6 +48,12 @@ data:
         relabel_configs:
           - action: labelmap
             regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: 192.168.49.2:8443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics
 
       # Kubernetes Pods avec annotation prometheus.io/scrape: "true"
       - job_name: 'kubernetes-pods'
