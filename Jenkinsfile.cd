@@ -110,7 +110,45 @@ pipeline {
             }
         }
 
-        // ── STAGE 5 : Vérification du rollout ────────────────────────────────
+        // ── STAGE 5 : Déploiement Monitoring (Prometheus + Grafana) ──────────
+        stage('📊 Déploiement Monitoring') {
+            steps {
+                sh """
+                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                        cd ${APP_DIR}
+
+                        echo "=== Namespace monitoring ==="
+                        kubectl apply -f k8s/monitoring/namespace.yaml
+
+                        echo "=== Node Exporter (metriques systeme VM) ==="
+                        kubectl apply -f k8s/monitoring/node-exporter.yaml
+
+                        echo "=== Prometheus ==="
+                        kubectl apply -f k8s/monitoring/prometheus.yaml
+
+                        echo "=== Grafana ==="
+                        kubectl apply -f k8s/monitoring/grafana.yaml
+
+                        echo "=== Attente demarrage Prometheus ==="
+                        kubectl rollout status deployment/prometheus -n monitoring --timeout=120s
+
+                        echo "=== Attente demarrage Grafana ==="
+                        kubectl rollout status deployment/grafana -n monitoring --timeout=120s
+
+                        echo ""
+                        echo "=== Pods monitoring ==="
+                        kubectl get pods -n monitoring
+
+                        echo ""
+                        echo "=== URLs Monitoring ==="
+                        echo "Prometheus : http://\$(minikube ip):30090"
+                        echo "Grafana    : http://\$(minikube ip):30300  (admin / filezen2024)"
+                    '
+                """
+            }
+        }
+
+        // ── STAGE 6 : Vérification du rollout ────────────────────────────────
         stage('✅ Vérification Déploiement') {
             steps {
                 sh """
@@ -130,9 +168,13 @@ pipeline {
                         kubectl get services
 
                         echo ""
-                        echo "=== URLs ==="
-                        echo "Frontend : http://\$(minikube ip):30173"
-                        echo "Backend  : http://\$(minikube ip):30500/api/test"
+                        echo "=== URLs Application ==="
+                        echo "Frontend   : http://\$(minikube ip):30173"
+                        echo "Backend    : http://\$(minikube ip):30500/api/test"
+                        echo ""
+                        echo "=== URLs Monitoring ==="
+                        echo "Prometheus : http://\$(minikube ip):30090"
+                        echo "Grafana    : http://\$(minikube ip):30300  (admin / filezen2024)"
                     '
                 """
             }
@@ -141,7 +183,7 @@ pipeline {
 
     post {
         success {
-            echo "Deploiement complet ! Frontend: http://192.168.12.161:30173 | Backend: http://192.168.12.161:30500"
+            echo "Deploiement complet ! Frontend: http://192.168.49.2:30173 | Backend: http://192.168.49.2:30500 | Grafana: http://192.168.49.2:30300"
         }
         failure {
             sh """
