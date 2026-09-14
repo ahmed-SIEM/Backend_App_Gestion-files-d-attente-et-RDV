@@ -210,6 +210,58 @@ def train_and_predict(df):
 
     return s, label, color, scores
 
+def explain_prediction(df):
+    """
+    Compare les métriques du build courant (dernière ligne) à la moyenne historique
+    et retourne une explication lisible indiquant ce qui est inhabituel.
+    """
+    if len(df) < 3:
+        return "Historique trop court pour une analyse détaillée."
+
+    # Historique = tous les builds sauf le courant
+    history = df.iloc[:-1]
+    current = df.iloc[-1]
+
+    feat_labels = {
+        'error_rate_pct':     ("taux d'erreur k6",     "%",   True),   # True = élevé est mauvais
+        'test_fail_rate_pct': ("taux d'échec tests",   "%",   True),
+        'p95_duration_ms':    ("temps de réponse P95", "ms",  True),
+        'avg_duration_ms':    ("durée moyenne",        "ms",  True),
+    }
+
+    deviations = []
+    for feat, (label, unit, high_is_bad) in feat_labels.items():
+        hist_mean = history[feat].mean()
+        hist_std  = history[feat].std()
+        curr_val  = float(current[feat])
+
+        if hist_std < 0.01:
+            # Historique stable — tout écart est notable
+            if abs(curr_val - hist_mean) > 0.5:
+                direction = "élevé" if curr_val > hist_mean else "faible"
+                deviations.append((3.0, label, curr_val, hist_mean, unit, direction))
+            continue
+
+        z = (curr_val - hist_mean) / hist_std
+        if abs(z) >= 1.3:
+            direction = "élevé" if curr_val > hist_mean else "faible"
+            deviations.append((abs(z), label, curr_val, hist_mean, unit, direction))
+
+    if not deviations:
+        return ("Toutes les métriques sont proches de la moyenne historique. "
+                "Le modèle a détecté une légère variation globale.")
+
+    # Trier par écart décroissant
+    deviations.sort(key=lambda x: x[0], reverse=True)
+    parts = []
+    for _, lbl, curr, mean, unit, direction in deviations[:3]:
+        parts.append(
+            "{lbl} {direction} ({curr:.1f}{unit} vs moy. hist. {mean:.1f}{unit})".format(
+                lbl=lbl, direction=direction, curr=curr, mean=mean, unit=unit
+            )
+        )
+    return "Métriques inhabituelles détectées : " + " · ".join(parts) + "."
+
 # ── 6. Graphiques matplotlib ───────────────────────────────────────────────────
 def _fig_to_b64(fig):
     buf = BytesIO()
@@ -277,7 +329,7 @@ def chart_anomaly(df, scores):
     return _fig_to_b64(fig)
 
 # ── 7. Rapport HTML ─────────────────────────────────────────────────────────────
-def generate_html(k6, allure, history_rows, score, label, color, scores_list, error_msg=None):
+def generate_html(k6, allure, history_rows, score, label, color, scores_list, error_msg=None, explanation=''):
     n = len(history_rows)
     is_collecting = (n < MIN_SAMPLES) or (not ML_AVAILABLE)
 
@@ -365,6 +417,12 @@ def generate_html(k6, allure, history_rows, score, label, color, scores_list, er
             'ANOMALIE':  'Anomalie detectee ! Performances significativement degradees.',
         }.get(label, '')
         sklearn_ver = getattr(sklearn, '__version__', '?') if ML_AVAILABLE else '?'
+        expl_html = (
+            '<div style="margin-top:10px;padding:10px 14px;background:#0f172a;border-radius:8px;'
+            'border-left:3px solid ' + color + ';font-size:.84rem;color:#94a3b8;line-height:1.6">'
+            '<strong style="color:' + color + '">Pourquoi ce label ?</strong><br>' + str(explanation) +
+            '</div>'
+        ) if explanation else ''
         pred_html = (
             '<div class="card" style="border-left:4px solid ' + color + '">'
             '<h2>Prediction du modele &#8212; Build #' + str(BUILD_NUMBER) + '</h2>'
@@ -375,6 +433,7 @@ def generate_html(k6, allure, history_rows, score, label, color, scores_list, er
             '<div style="flex:1">'
             '<div style="font-size:1.6rem;font-weight:700;color:' + color + ';margin-bottom:8px">' + label + '</div>'
             '<div style="color:#94a3b8;font-size:.9rem">' + desc + '</div>'
+            + expl_html +
             '<div style="margin-top:12px;background:#0f172a;border-radius:6px;height:12px">'
             '<div style="background:' + color + ';width:' + str(round(score)) + '%;height:12px;border-radius:6px"></div>'
             '</div>'
@@ -504,6 +563,7 @@ if __name__ == '__main__':
         n = len(history_rows)
         print("  Historique : " + str(n) + " build(s) enregistres")
 
+        explanation = ''
         if not ML_AVAILABLE or n < MIN_SAMPLES:
             reason = "packages ML manquants" if not ML_AVAILABLE else "collecte (" + str(n) + "/" + str(MIN_SAMPLES) + ")"
             print("  Mode collecte : " + reason)
@@ -514,12 +574,15 @@ if __name__ == '__main__':
             score, label, color, scores_np = train_and_predict(df)
             scores_list = scores_np.tolist()
             print("  Prediction : " + label + " (score=" + str(round(score, 1)) + "/100)")
+            explanation = explain_prediction(df)
+            print("  Explication : " + explanation)
             # Stocker le label du build courant de façon permanente
             save_ml_label(HISTORY_CSV, BUILD_NUMBER, score, label)
             # Recharger pour que la table HTML affiche le label fraîchement stocké
             history_rows = load_history_raw(HISTORY_CSV)
 
-        html = generate_html(k6, allure, history_rows, score, label, color, scores_list)
+        html = generate_html(k6, allure, history_rows, score, label, color, scores_list,
+                             explanation=explanation if not is_collecting else '')
         with open(OUTPUT_HTML, 'w', encoding='utf-8') as f:
             f.write(html)
         print("  Rapport ML genere : " + OUTPUT_HTML + "\n")
