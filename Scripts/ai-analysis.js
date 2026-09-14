@@ -3,7 +3,7 @@
  * 🤖 Analyse IA — FileZen CI/CD
  *
  * Analyse les résultats de tests (Allure + k6) avec Groq AI (GRATUIT)
- * Modèle : llama-3.1-8b-instant (rapide, gratuit, très capable)
+ * Modèle : llama3-8b-8192 (rapide, gratuit, très capable)
  *
  * Génère un rapport HTML professionnel avec :
  *   - Résumé exécutif en langage naturel
@@ -78,7 +78,7 @@ function readK6Summary(file) {
 async function callGroq(prompt) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      model: 'llama-3.1-8b-instant',
+      model: 'llama3-8b-8192',
       max_tokens: 1024,
       temperature: 0.3,
       messages: [
@@ -212,7 +212,7 @@ function generateHTML(allure, k6, ai) {
 <div class="header">
   <h1>🤖 Analyse IA — FileZen CI/CD</h1>
   <p>Build #${BUILD_NUMBER} &nbsp;·&nbsp; ${now}</p>
-  <div class="ai-tag">⚡ Powered by Claude AI (llama-3.1-8b-instant (Groq))</div>
+  <div class="ai-tag">⚡ Powered by Claude AI (llama3-8b-8192 (Groq))</div>
 </div>
 
 <div class="g4">
@@ -297,7 +297,7 @@ async function main() {
     return;
   }
 
-  console.log('   Appel Groq API (llama-3.1-8b-instant)...');
+  console.log('   Appel Groq API (llama3-8b-8192)...');
   const ai = await analyzeWithClaude(allure, k6);
 
   console.log(`   ✅ Décision: ${ai.decision_deploiement} | Score: ${ai.score_qualite}/100 | Risque: ${ai.risque}`);

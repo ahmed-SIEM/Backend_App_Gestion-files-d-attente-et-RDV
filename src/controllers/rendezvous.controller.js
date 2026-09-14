@@ -174,13 +174,13 @@ exports.reserverRDV = async (req, res) => {
 exports.mesRDV = async (req, res) => {
   try {
     const rdvs = await RendezVous.find({
-      citoyen: req.user._id,
-      statut: { $in: ['confirme', 'en_cours'] }
+      citoyen: req.user._id
     })
       .populate('creneaux')
       .populate('service', 'nom')
       .populate('etablissement', 'nom adresse')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(50);
 
     res.json({ success: true, count: rdvs.length, data: rdvs });
 

@@ -45,6 +45,24 @@ async function checkAndSendQueueReminders(serviceId) {
   }
 }
 
+// Helper : notifier chaque ticket en attente de sa nouvelle position via Socket.io
+async function emitPositionUpdates(serviceId) {
+  try {
+    const service = await Service.findById(serviceId).select('temps_traitement_moyen');
+    const tempsParPersonne = service?.temps_traitement_moyen || 15;
+
+    const tickets = await Ticket.find({ service: serviceId, statut: 'en_attente' }).sort({ position: 1 }).select('_id');
+    for (let i = 0; i < tickets.length; i++) {
+      socketUtil.emitTicketUpdate(tickets[i]._id.toString(), {
+        tickets_avant: i,
+        temps_estime_minutes: i * tempsParPersonne
+      });
+    }
+  } catch (err) {
+    console.error('emitPositionUpdates error:', err.message);
+  }
+}
+
 // Helper : calculer et émettre les stats d'un service via Socket.io
 async function emitServiceStats(serviceId) {
   try {
@@ -213,13 +231,13 @@ exports.prendreTicket = async (req, res) => {
     const numeroTicket = file.dernier_numero_genere;
     await file.save();
     
-    // 8. Créer le ticket
+    // 8. Créer le ticket — position = numeroTicket (monotone, pas de collision après annulations)
     const ticket = await Ticket.create({
       numero: numeroTicket,
       citoyen: req.user._id,
       service: serviceId,
       etablissement: service.etablissement._id,
-      position: ticketsEnAttente + 1,
+      position: numeroTicket,
       statut: 'en_attente',
       temps_attente_minutes: tempsEstimeMinutes
     });
@@ -229,6 +247,7 @@ exports.prendreTicket = async (req, res) => {
 
     // Notifier tous les clients qui suivent ce service
     await emitServiceStats(serviceId);
+    emitPositionUpdates(serviceId);
 
     res.status(201).json({
       success: true,
@@ -315,16 +334,23 @@ exports.detailsTicket = async (req, res) => {
       statut: 'en_attente',
       position: { $lt: ticket.position }
     });
-    
+
     // Calculer temps estimé
     const tempsEstime = ticketsAvant * (ticket.service.temps_traitement_moyen || 15);
-    
+
+    // Ticket actuellement en cours de traitement pour ce service
+    const ticketActuel = await Ticket.findOne({
+      service: ticket.service._id,
+      statut: 'appele'
+    }).sort({ position: -1 }).select('numero');
+
     res.json({
       success: true,
       data: {
         ...ticket.toObject(),
         tickets_avant: ticketsAvant,
-        temps_estime_minutes: tempsEstime
+        temps_estime_minutes: tempsEstime,
+        ticket_actuel_numero: ticketActuel?.numero ?? null
       }
     });
     
@@ -359,6 +385,7 @@ exports.annulerTicket = async (req, res) => {
     await ticket.save();
 
     await emitServiceStats(ticket.service);
+    emitPositionUpdates(ticket.service);
 
     res.json({
       success: true,
@@ -455,6 +482,7 @@ exports.appellerProchain = async (req, res) => {
 
     // Notifier tous les clients du service + le citoyen concerné
     await emitServiceStats(req.user.service_id);
+    emitPositionUpdates(req.user.service_id);
     socketUtil.emitTicketCalled(ticket._id.toString(), {
       ticket_id: ticket._id,
       numero: ticket.numero,
@@ -528,7 +556,7 @@ exports.marquerServi = async (req, res) => {
     ticket.temps_attente_minutes = tempsAttente;
     
     await ticket.save();
-    
+
     // Incrémenter compteur
     await FileAttente.findOneAndUpdate(
       { service: ticket.service },
@@ -536,6 +564,7 @@ exports.marquerServi = async (req, res) => {
     );
 
     await emitServiceStats(ticket.service);
+    emitPositionUpdates(ticket.service);
     checkAndSendQueueReminders(ticket.service);
 
     res.json({
@@ -573,6 +602,7 @@ exports.marquerAbsent = async (req, res) => {
     await ticket.save();
 
     await emitServiceStats(ticket.service);
+    emitPositionUpdates(ticket.service);
     checkAndSendQueueReminders(ticket.service);
 
     res.json({

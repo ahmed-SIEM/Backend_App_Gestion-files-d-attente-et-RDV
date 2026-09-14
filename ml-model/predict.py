@@ -97,7 +97,8 @@ def read_allure(path):
 
 # ── 3. Historique CSV (pur Python, sans pandas) ───────────────────────────────
 COLS = ['build', 'timestamp', 'p95_duration_ms', 'avg_duration_ms',
-        'error_rate_pct', 'test_fail_rate_pct', 'requests', 'total_tests']
+        'error_rate_pct', 'test_fail_rate_pct', 'requests', 'total_tests',
+        'ml_score', 'ml_label']
 
 def load_history_raw(path):
     """Retourne une liste de dicts, sans pandas."""
@@ -120,6 +121,10 @@ def append_history_raw(path, build, k6, allure):
     if parent:
         os.makedirs(parent, exist_ok=True)
     file_exists = os.path.exists(path)
+    existing = load_history_raw(path)
+    # Éviter les doublons (si le même build est rejoué)
+    if any(r.get('build') == str(build) for r in existing):
+        return existing
     row = {
         'build':              str(build),
         'timestamp':          datetime.datetime.now().isoformat(),
@@ -129,13 +134,35 @@ def append_history_raw(path, build, k6, allure):
         'test_fail_rate_pct': str(allure['fail_rate']),
         'requests':           str(k6['requests']),
         'total_tests':        str(allure['total']),
+        'ml_score':           '',
+        'ml_label':           '',
     }
     with open(path, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=COLS)
+        writer = csv.DictWriter(f, fieldnames=COLS, extrasaction='ignore')
         if not file_exists:
             writer.writeheader()
         writer.writerow(row)
     return load_history_raw(path)
+
+def save_ml_label(path, build, score, label):
+    """Met à jour la colonne ml_score et ml_label du build courant dans le CSV."""
+    import csv
+    rows = load_history_raw(path)
+    for r in rows:
+        if r.get('build') == str(build):
+            r['ml_score'] = str(round(score, 1))
+            r['ml_label'] = label
+    try:
+        with open(path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=COLS, extrasaction='ignore')
+            writer.writeheader()
+            for r in rows:
+                # Remplir les colonnes manquantes pour les vieilles lignes
+                r.setdefault('ml_score', '')
+                r.setdefault('ml_label', '')
+                writer.writerow(r)
+    except Exception as e:
+        print("  Impossible de sauvegarder le label ML : " + str(e))
 
 # ── 4. Pandas wrapper (si disponible) ─────────────────────────────────────────
 def load_history_df(path):
@@ -272,9 +299,18 @@ def generate_html(k6, allure, history_rows, score, label, color, scores_list, er
     # Tableau historique
     rows_html = ''
     for i, row in enumerate(reversed(history_rows)):
-        s  = float(scores_list[len(history_rows) - 1 - i]) if (scores_list and len(scores_list) > i) else 50.0
-        sc = '#10b981' if s >= 60 else '#f59e0b' if s >= 35 else '#ef4444'
-        sl = 'NORMAL' if s >= 60 else ('ATTENTION' if s >= 35 else 'ANOMALIE')
+        # Utiliser le label stocké (stable) plutôt que la re-prédiction du modèle courant
+        stored_label = row.get('ml_label', '').strip()
+        stored_score_str = row.get('ml_score', '').strip()
+        if stored_label and stored_score_str:
+            s  = float(stored_score_str)
+            sl = stored_label
+            sc = '#10b981' if sl == 'NORMAL' else '#f59e0b' if sl == 'ATTENTION' else '#ef4444'
+        else:
+            # Ancien build sans label stocké → utiliser la prédiction courante
+            s  = float(scores_list[len(history_rows) - 1 - i]) if (scores_list and len(scores_list) > i) else 50.0
+            sc = '#10b981' if s >= 60 else '#f59e0b' if s >= 35 else '#ef4444'
+            sl = 'NORMAL' if s >= 60 else ('ATTENTION' if s >= 35 else 'ANOMALIE')
         if is_collecting:
             sc, sl = '#3b82f6', 'COLLECTE'
         ts = str(row.get('timestamp', ''))[:16].replace('T', ' ')
@@ -478,6 +514,10 @@ if __name__ == '__main__':
             score, label, color, scores_np = train_and_predict(df)
             scores_list = scores_np.tolist()
             print("  Prediction : " + label + " (score=" + str(round(score, 1)) + "/100)")
+            # Stocker le label du build courant de façon permanente
+            save_ml_label(HISTORY_CSV, BUILD_NUMBER, score, label)
+            # Recharger pour que la table HTML affiche le label fraîchement stocké
+            history_rows = load_history_raw(HISTORY_CSV)
 
         html = generate_html(k6, allure, history_rows, score, label, color, scores_list)
         with open(OUTPUT_HTML, 'w', encoding='utf-8') as f:
