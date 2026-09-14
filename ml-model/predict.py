@@ -581,8 +581,9 @@ if __name__ == '__main__':
             # Recharger pour que la table HTML affiche le label fraîchement stocké
             history_rows = load_history_raw(HISTORY_CSV)
 
+        ml_active = ML_AVAILABLE and n >= MIN_SAMPLES
         html = generate_html(k6, allure, history_rows, score, label, color, scores_list,
-                             explanation=explanation if not is_collecting else '')
+                             explanation=explanation if ml_active else '')
         with open(OUTPUT_HTML, 'w', encoding='utf-8') as f:
             f.write(html)
         print("  Rapport ML genere : " + OUTPUT_HTML + "\n")

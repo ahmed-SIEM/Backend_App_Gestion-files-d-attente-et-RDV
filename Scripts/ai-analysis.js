@@ -74,12 +74,42 @@ function readK6Summary(file) {
   } catch(_) { return null; }
 }
 
-// Modèles tentés dans l'ordre (fallback automatique si l'un est indisponible)
-const GROQ_MODELS = [
+// Modèles préférés — la liste réelle est demandée dynamiquement à Groq
+const PREFERRED_MODELS = [
   'gemma2-9b-it',
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
+  'llama3-70b-8192',
+  'mixtral-8x7b-32768',
 ];
+
+// ── Lister les modèles disponibles sur ce compte Groq ────────────────────────
+async function listGroqModels() {
+  return new Promise((resolve) => {
+    const req = require('https').request({
+      hostname: 'api.groq.com',
+      path:     '/openai/v1/models',
+      method:   'GET',
+      headers:  { 'Authorization': `Bearer ${API_KEY}` },
+    }, res => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          // Garder uniquement les modèles de chat (exclure whisper, tts, etc.)
+          const ids = (parsed.data || [])
+            .map(m => m.id)
+            .filter(id => !id.includes('whisper') && !id.includes('tts') && !id.includes('guard'));
+          console.log(`   Modèles Groq disponibles : ${ids.join(', ')}`);
+          resolve(ids);
+        } catch(_) { resolve([]); }
+      });
+    });
+    req.on('error', () => resolve([]));
+    req.end();
+  });
+}
 
 // ── Appel Groq API (gratuit, compatible OpenAI) ───────────────────────────────
 async function callGroqModel(model, prompt) {
@@ -124,8 +154,20 @@ async function callGroqModel(model, prompt) {
 }
 
 async function callGroq(prompt) {
+  // Récupérer la liste réelle des modèles disponibles sur ce compte
+  const available = await listGroqModels();
+
+  // Construire la liste à essayer : préférés disponibles d'abord, puis tout le reste
+  const toTry = [
+    ...PREFERRED_MODELS.filter(m => available.includes(m)),
+    ...available.filter(m => !PREFERRED_MODELS.includes(m)),
+  ];
+
+  // Si l'API /models a échoué, retomber sur la liste statique
+  if (toTry.length === 0) toTry.push(...PREFERRED_MODELS);
+
   let lastError;
-  for (const model of GROQ_MODELS) {
+  for (const model of toTry.slice(0, 6)) {
     try {
       console.log(`   Tentative modèle : ${model}...`);
       const result = await callGroqModel(model, prompt);
@@ -136,7 +178,7 @@ async function callGroq(prompt) {
       lastError = err;
     }
   }
-  throw lastError;
+  throw lastError || new Error('Aucun modèle Groq disponible');
 }
 
 // ── Construire le prompt et analyser ─────────────────────────────────────────
