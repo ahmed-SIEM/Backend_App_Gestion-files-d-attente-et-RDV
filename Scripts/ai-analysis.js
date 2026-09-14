@@ -74,11 +74,18 @@ function readK6Summary(file) {
   } catch(_) { return null; }
 }
 
+// Modèles tentés dans l'ordre (fallback automatique si l'un est indisponible)
+const GROQ_MODELS = [
+  'gemma2-9b-it',
+  'llama-3.1-8b-instant',
+  'llama-3.3-70b-versatile',
+];
+
 // ── Appel Groq API (gratuit, compatible OpenAI) ───────────────────────────────
-async function callGroq(prompt) {
+async function callGroqModel(model, prompt) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
+      model,
       max_tokens: 1024,
       temperature: 0.3,
       messages: [
@@ -114,6 +121,22 @@ async function callGroq(prompt) {
     req.write(body);
     req.end();
   });
+}
+
+async function callGroq(prompt) {
+  let lastError;
+  for (const model of GROQ_MODELS) {
+    try {
+      console.log(`   Tentative modèle : ${model}...`);
+      const result = await callGroqModel(model, prompt);
+      console.log(`   ✅ Modèle utilisé : ${model}`);
+      return result;
+    } catch (err) {
+      console.log(`   ⚠️  ${model} : ${err.message}`);
+      lastError = err;
+    }
+  }
+  throw lastError;
 }
 
 // ── Construire le prompt et analyser ─────────────────────────────────────────
@@ -297,7 +320,7 @@ async function main() {
     return;
   }
 
-  console.log('   Appel Groq API (llama-3.3-70b-versatile)...');
+  console.log('   Appel Groq API (fallback automatique sur 3 modèles)...');
   const ai = await analyzeWithClaude(allure, k6);
 
   console.log(`   ✅ Décision: ${ai.decision_deploiement} | Score: ${ai.score_qualite}/100 | Risque: ${ai.risque}`);
