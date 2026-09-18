@@ -87,26 +87,54 @@ pipeline {
         // ── STAGE 4 : Déploiement Kubernetes ─────────────────────────────────
         stage('🚀 Déploiement Kubernetes') {
             steps {
-                sh """
-                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
-                        cd ${APP_DIR}
+                script {
+                    // Secrets réels stockés dans le coffre Jenkins (Credentials),
+                    // jamais dans k8s/secret.yaml (qui ne contient que des placeholders versionnés).
+                    withCredentials([
+                        string(credentialsId: 'filezen-jwt-secret',        variable: 'JWT_SECRET'),
+                        string(credentialsId: 'filezen-cloudinary-name',   variable: 'CLOUDINARY_CLOUD_NAME'),
+                        string(credentialsId: 'filezen-cloudinary-key',    variable: 'CLOUDINARY_API_KEY'),
+                        string(credentialsId: 'filezen-cloudinary-secret', variable: 'CLOUDINARY_API_SECRET'),
+                        string(credentialsId: 'filezen-email-user',        variable: 'EMAIL_USER'),
+                        string(credentialsId: 'filezen-email-password',    variable: 'EMAIL_PASSWORD')
+                    ]) {
+                        sh """
+                            ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_HOST} '
+                                cd ${APP_DIR}
 
-                        echo "=== Application des manifests K8s ==="
-                        kubectl apply -f k8s/configmap.yaml
-                        kubectl apply -f k8s/secret.yaml
-                        kubectl apply -f k8s/mongodb.yaml
-                        kubectl apply -f k8s/backend.yaml
-                        kubectl apply -f k8s/frontend.yaml
+                                echo "=== ConfigMap (non sensible) ==="
+                                kubectl apply -f k8s/configmap.yaml
 
-                        echo "=== Mise a jour images ==="
-                        kubectl set image deployment/filezen-backend \
-                            filezen-backend=${IMAGE_BACKEND}:${IMAGE_TAG}
-                        kubectl set image deployment/filezen-frontend \
-                            filezen-frontend=${IMAGE_FRONTEND}:${IMAGE_TAG}
+                                echo "=== Secret genere a la volee depuis Jenkins Credentials ==="
+                                kubectl create secret generic filezen-secret \
+                                    --namespace=default \
+                                    --from-literal=JWT_SECRET="${JWT_SECRET}" \
+                                    --from-literal=CLOUDINARY_CLOUD_NAME="${CLOUDINARY_CLOUD_NAME}" \
+                                    --from-literal=CLOUDINARY_API_KEY="${CLOUDINARY_API_KEY}" \
+                                    --from-literal=CLOUDINARY_API_SECRET="${CLOUDINARY_API_SECRET}" \
+                                    --from-literal=EMAIL_HOST="smtp.gmail.com" \
+                                    --from-literal=EMAIL_PORT="587" \
+                                    --from-literal=EMAIL_USER="${EMAIL_USER}" \
+                                    --from-literal=EMAIL_PASSWORD="${EMAIL_PASSWORD}" \
+                                    --from-literal=EMAIL_FROM="FileZen <${EMAIL_USER}>" \
+                                    --dry-run=client -o yaml | kubectl apply -f -
 
-                        echo "=== Manifests appliques ==="
-                    '
-                """
+                                echo "=== Autres manifests K8s ==="
+                                kubectl apply -f k8s/mongodb.yaml
+                                kubectl apply -f k8s/backend.yaml
+                                kubectl apply -f k8s/frontend.yaml
+
+                                echo "=== Mise a jour images ==="
+                                kubectl set image deployment/filezen-backend \
+                                    filezen-backend=${IMAGE_BACKEND}:${IMAGE_TAG}
+                                kubectl set image deployment/filezen-frontend \
+                                    filezen-frontend=${IMAGE_FRONTEND}:${IMAGE_TAG}
+
+                                echo "=== Manifests appliques ==="
+                            '
+                        """
+                    }
+                }
             }
         }
 
